@@ -1,6 +1,6 @@
 /* Service Worker: legt alle Dateien der App im Gerät ab, damit sie ohne Internet läuft.
    WICHTIG: Bei jeder Änderung an der App die Versionsnummer in CACHE erhöhen. */
-var CACHE = 'inventur-v1';
+var CACHE = 'inventur-v2';
 var DATEIEN = [
   './',
   'index.html',
@@ -18,7 +18,9 @@ var DATEIEN = [
 self.addEventListener('install', function (ev) {
   ev.waitUntil(
     caches.open(CACHE)
-      .then(function (c) { return c.addAll(DATEIEN); })
+      .then(function (c) { /* cache: 'reload' = am HTTP-Cache vorbei, sonst könnte eine alte Datei in den neuen Cache geraten */
+        return c.addAll(DATEIEN.map(function (d) { return new Request(d, { cache: 'reload' }); }));
+      })
       .then(function () { return self.skipWaiting(); })
   );
 });

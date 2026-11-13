@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '1.0.0';
+  var VERSION = '1.0.1';
   var DB_NAME = 'inventur';
   var DB_VERSION = 1;
   var STANDARD_HERSTELLER = ['Schüco', 'Dormakaba', 'GEZE', 'Record', 'Sonstige'];
@@ -21,6 +21,7 @@
     letzterExport: 0,
     eintraege: [],      // ohne Foto-Daten, nur Vorschaubild
     entwurfFoto: null,  // { buf, type, thumb }
+    fotoLaeuft: false,  // Foto wird gerade verkleinert
     speichert: false
   };
 
@@ -446,6 +447,7 @@
     var knopf = $('btn-foto');
     knopf.disabled = true;
     knopf.textContent = 'Foto wird verarbeitet …';
+    zustand.fotoLaeuft = true;
     fotoVerarbeiten(datei).then(function (foto) {
       zustand.entwurfFoto = foto;
       $('f-nummer').classList.remove('fehler');
@@ -455,6 +457,7 @@
     }).then(function () {
       eingabe.value = '';
       knopf.disabled = false;
+      zustand.fotoLaeuft = false;
       zeigeFotoVorschau();
     });
   }
@@ -483,6 +486,8 @@
 
   function speichern() {
     if (zustand.speichert) return;
+    // Sonst würde das Foto erst nach dem Speichern fertig und am nächsten Artikel hängen
+    if (zustand.fotoLaeuft) { meldung('Das Foto wird noch verarbeitet. Bitte kurz warten und noch einmal „Speichern“ antippen.'); return; }
     var fNummer = $('f-nummer'), fStueck = $('f-stueck');
     var nummer = bereinigen(fNummer.value);
     var stueck = stueckLesen(fStueck.value);
@@ -523,6 +528,7 @@
 
     zustand.speichert = true;
     $('btn-speichern').disabled = true;
+    clearTimeout(entwurfTimer); // sonst schreibt der Timer den Entwurf nach dem Speichern zurück
     transaktion(['eintraege', 'fotos', 'einstellungen'], 'readwrite', function (tx) {
       var req = tx.objectStore('eintraege').add(eintrag);
       req.onsuccess = function () {
@@ -540,6 +546,7 @@
       meldung('Gespeichert: ' + stueck + ' × ' + (nummer || 'Foto-Artikel'),
         schonDa ? { zusatz: 'Hinweis: Diese Artikelnummer wurde bereits ' + schonDa + '× erfasst.' } : null);
     }).catch(function (e) {
+      entwurfMerken();
       fehlerMeldung(speicherFehlerText(e));
     }).then(function () {
       zustand.speichert = false;
@@ -706,7 +713,7 @@
         e.hatFoto ? csvFeld(fotoDateiname(e)) : ''
       ].join(';'));
     });
-    return '﻿' + zeilen.join('\r\n') + '\r\n';
+    return '\uFEFF' + zeilen.join('\r\n') + '\r\n';
   }
 
   /* ---------- ZIP (ohne Kompression – JPEGs sind schon komprimiert) ---------- */
@@ -812,15 +819,18 @@
       dateien = null;
       var zipName = basis + '.zip';
       var url = URL.createObjectURL(blob);
-      zustand.letzterExport = jetzt;
-      einstellungSchreiben('letzterExport', jetzt).catch(function () { /* egal */ });
-      zeigeEintraege();
+      // Als exportiert gilt erst, wenn die Datei wirklich heruntergeladen oder geteilt wurde
+      var exportGemerkt = function () {
+        zustand.letzterExport = jetzt;
+        einstellungSchreiben('letzterExport', jetzt).catch(function () { /* egal */ });
+        zeigeEintraege();
+      };
 
       var inhalt = [
         eintraege.length + (eintraege.length === 1 ? ' Eintrag' : ' Einträge') + ' und ' +
           (mitFoto.length - fehlend) + (mitFoto.length - fehlend === 1 ? ' Foto' : ' Fotos') + ' in der Datei:',
         el('p', {}, el('strong', { text: zipName })),
-        el('a', { class: 'knopf knopf-blau knopf-breit', id: 'export-download', href: url, download: zipName, text: 'Datei herunterladen' })
+        el('a', { class: 'knopf knopf-blau knopf-breit', id: 'export-download', href: url, download: zipName, text: 'Datei herunterladen', onclick: exportGemerkt })
       ];
       if (fehlend) inhalt.splice(1, 0, el('p', { class: 'warnung', text: fehlend + ' Foto(s) konnten nicht gelesen werden.' }));
 
@@ -833,7 +843,7 @@
           type: 'button', class: 'knopf knopf-grau knopf-breit', id: 'export-teilen', style: 'margin-top:10px',
           text: 'Teilen / Senden …',
           onclick: function () {
-            navigator.share({ files: [datei], title: zipName }).catch(function (err) {
+            navigator.share({ files: [datei], title: zipName }).then(exportGemerkt).catch(function (err) {
               if (err && err.name !== 'AbortError') fehlerMeldung('Teilen hat nicht geklappt. Bitte „Datei herunterladen“ benutzen.');
             });
           }

@@ -70,8 +70,8 @@ Andere Textfelder, die mit `=`, `+`, `-` oder `@` beginnen, bekommen ein `'` vor
 - Scannen: eingebauter `BarcodeDetector` des Browsers, wenn vorhanden (Android/Chrome); sonst der
   mitgelieferte ZXing-Decoder als WebAssembly (`vendor/`, u. a. für iPhone/iPad).
 - Speicher: IndexedDB (`inventur`); Fotos werden auf max. 1600 px verkleinert (JPEG).
-- **Nach jeder Änderung an der App** in `sw.js` die Zeile `var CACHE = 'inventur-v1'` hochzählen
-  (`v2`, `v3` …) – sonst behalten die Geräte die alte Version. Die Geräte holen die neue Version
+- **Nach jeder Änderung an der App** in `sw.js` die Zeile `var CACHE = 'inventur-v2'` hochzählen
+  (`v3`, `v4` …) – sonst behalten die Geräte die alte Version. Die Geräte holen die neue Version
   beim nächsten Öffnen mit Internet; sie wird beim darauffolgenden Start aktiv.
 - Lokal testen: `python3 -m http.server` im Ordner, dann `http://localhost:8000` (auf `localhost`
   geht die Kamera auch ohne https).
