@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Inventur</title>
+<meta name="theme-color" content="#1f3a5f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Inventur">
+<meta name="format-detection" content="telephone=no">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="kopf">
+  <h1>Inventur</h1>
+  <span id="kopf-geraet" class="kopf-geraet"></span>
+</header>
+
+<main>
+  <!-- Reiter 1: Erfassen -->
+  <section id="seite-erfassen" class="seite">
+    <button type="button" id="hersteller-anzeige" class="hersteller-anzeige">
+      <span class="ha-text">
+        <span class="ha-label">Hersteller</span>
+        <span id="hersteller-aktiv" class="ha-name">–</span>
+      </span>
+      <span class="ha-wechseln">Wechseln</span>
+    </button>
+
+    <label class="feld-label" for="f-nummer">Artikelnummer</label>
+    <div class="zeile">
+      <input id="f-nummer" class="eingabe" type="text" autocomplete="off" autocapitalize="characters"
+             autocorrect="off" spellcheck="false" enterkeyhint="next" placeholder="Nummer">
+      <button type="button" id="btn-scannen" class="knopf knopf-blau knopf-scan">Scannen</button>
+    </div>
+
+    <label class="feld-label" for="f-stueck">Stückzahl</label>
+    <div class="zeile stueck-zeile">
+      <button type="button" id="btn-minus" class="knopf knopf-grau knopf-pm" aria-label="Eins weniger">−</button>
+      <input id="f-stueck" class="eingabe eingabe-stueck" type="text" inputmode="numeric" pattern="[0-9]*"
+             autocomplete="off" maxlength="6" placeholder="0">
+      <button type="button" id="btn-plus" class="knopf knopf-grau knopf-pm" aria-label="Eins mehr">+</button>
+    </div>
+
+    <div class="foto-bereich">
+      <input id="f-foto" type="file" accept="image/*" capture="environment" class="versteckt" tabindex="-1">
+      <button type="button" id="btn-foto" class="knopf knopf-grau knopf-breit">Foto aufnehmen</button>
+      <div id="foto-vorschau" class="foto-vorschau versteckt">
+        <img id="foto-bild" alt="Foto-Vorschau">
+        <div class="foto-info">
+          <span>Foto vorhanden</span>
+          <button type="button" id="btn-foto-weg" class="knopf knopf-rot-leer">Foto entfernen</button>
+        </div>
+      </div>
+      <p class="hinweis-klein">Keine Artikelnummer zu finden? Dann Foto machen – das reicht.</p>
+    </div>
+
+    <label class="feld-label" for="f-bemerkung">Bemerkung <span class="optional">(freiwillig)</span></label>
+    <input id="f-bemerkung" class="eingabe" type="text" autocomplete="off" maxlength="200" enterkeyhint="done">
+
+    <button type="button" id="btn-speichern" class="knopf knopf-gruen knopf-breit knopf-gross">Speichern</button>
+
+    <h2 class="abschnitt">Zuletzt erfasst</h2>
+    <div id="zuletzt" class="karten"></div>
+  </section>
+
+  <!-- Reiter 2: Hersteller -->
+  <section id="seite-hersteller" class="seite versteckt">
+    <p class="erklaerung">Hersteller antippen. Alles, was danach erfasst wird, gehört zu diesem Hersteller – bis ein anderer gewählt wird.</p>
+    <div id="hersteller-liste" class="hersteller-liste"></div>
+
+    <h2 class="abschnitt">Hersteller hinzufügen</h2>
+    <div class="zeile">
+      <input id="f-hersteller-neu" class="eingabe" type="text" autocomplete="off" maxlength="60"
+             enterkeyhint="done" placeholder="Name">
+      <button type="button" id="btn-hersteller-neu" class="knopf knopf-blau">Hinzufügen</button>
+    </div>
+  </section>
+
+  <!-- Reiter 3: Liste -->
+  <section id="seite-liste" class="seite versteckt">
+    <div class="zaehler" id="zaehler">0 Einträge</div>
+    <button type="button" id="btn-export" class="knopf knopf-blau knopf-breit knopf-gross">Exportieren (ZIP-Datei)</button>
+    <p class="hinweis-klein" id="export-info"></p>
+
+    <div id="liste" class="karten"></div>
+
+    <h2 class="abschnitt">Einstellungen</h2>
+    <div class="einstellung">
+      <div>
+        <div class="feld-label ohne-abstand">Name / Gerät</div>
+        <div id="geraet-anzeige" class="geraet-anzeige"></div>
+      </div>
+      <button type="button" id="btn-geraet" class="knopf knopf-grau">Ändern</button>
+    </div>
+    <button type="button" id="btn-alles-loeschen" class="knopf knopf-rot-leer knopf-breit">Alles löschen</button>
+    <p class="hinweis-klein version" id="version"></p>
+  </section>
+</main>
+
+<nav class="reiter" aria-label="Bereiche">
+  <button type="button" class="reiter-knopf aktiv" data-seite="erfassen">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5v14M7 5v14M11 5v14M14 5v14M18 5v14M21 5v14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <span>Erfassen</span>
+  </button>
+  <button type="button" class="reiter-knopf" data-seite="hersteller">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 21V10l6 4v-4l6 4V4h6v17z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+    <span>Hersteller</span>
+  </button>
+  <button type="button" class="reiter-knopf" data-seite="liste">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <span>Liste <span id="reiter-zaehler" class="reiter-zaehler"></span></span>
+  </button>
+</nav>
+
+<!-- Scanner (Vollbild) -->
+<div id="scanner" class="scanner versteckt" role="dialog" aria-modal="true" aria-label="Code scannen">
+  <video id="scanner-video" playsinline muted autoplay></video>
+  <div class="scanner-rahmen" aria-hidden="true"></div>
+  <div id="scanner-text" class="scanner-text">Kamera startet …</div>
+  <div class="scanner-knoepfe">
+    <button type="button" id="btn-licht" class="knopf knopf-grau versteckt">Licht an</button>
+    <button type="button" id="btn-scan-abbrechen" class="knopf knopf-weiss">Abbrechen</button>
+  </div>
+</div>
+
+<!-- Dialog -->
+<div id="dialog-hintergrund" class="dialog-hintergrund versteckt">
+  <div id="dialog" class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-titel">
+    <h2 id="dialog-titel"></h2>
+    <div id="dialog-inhalt"></div>
+    <div id="dialog-knoepfe" class="dialog-knoepfe"></div>
+  </div>
+</div>
+
+<div id="meldung" class="meldung versteckt" role="status" aria-live="polite"></div>
+
+<noscript><p style="padding:16px">Diese App benötigt JavaScript.</p></noscript>
+<script src="app.js"></script>
+</body>
+</html>
