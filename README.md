@@ -24,13 +24,26 @@ Die Kamera funktioniert nur über `https` – GitHub Pages liefert das automatis
 ## Benutzung
 
 1. Beim ersten Start den **Namen bzw. Gerätenamen** eintragen (jedes Gerät einen anderen!).
-2. Reiter **Hersteller**: Hersteller antippen. Er gilt für alle folgenden Einträge, bis gewechselt wird.
-3. Reiter **Erfassen**: „Scannen“ (oder Nummer eintippen), Stückzahl, „Speichern“.
-   Keine Nummer am Teil? „Foto aufnehmen“ – dann darf die Nummer leer bleiben.
-4. Reiter **Liste**: alle Einträge ansehen, bearbeiten, löschen, exportieren.
+2. Oben im Reiter **Erfassen** steht groß der aktive **Hersteller** – antippen zum Ändern.
+   Ohne gewählten Hersteller erscheint nur „Hersteller wählen“.
+3. Oben zwischen **Scannen** und **Eintippen** umschalten. Die Wahl bleibt gespeichert.
+   - **Scannen:** Das Kamerabild läuft im Reiter. Code ins Bild halten → Nummer erscheint groß
+     (antippen = korrigieren, ✕ = verwerfen) → Stückzahl auf dem Ziffernblock → **Speichern** →
+     sofort scanbereit. Derselbe Code löst erst wieder aus, wenn er kurz aus dem Bild war
+     oder nach ca. 4 Sekunden.
+   - **Eintippen:** Artikelnummer → Enter/„Weiter“ → Stückzahl → Enter/„Speichern“ → die
+     Artikelnummer ist sofort wieder bereit.
+4. Keine Nummer am Teil? **„Ohne Nummer – mit Foto“**: Foto machen, Beschreibung (freiwillig),
+   Stückzahl, **Speichern**. „Abbrechen“ führt ohne Speichern zurück.
+5. Nach dem Speichern zeigt ein grüner Balken z. B. „✓ 4711 · 12 Stück“ mit **Rückgängig**.
+   Wurde die Nummer schon erfasst, steht dort zusätzlich „bereits X× erfasst“.
+6. Reiter **Liste**: alle Einträge ansehen, bearbeiten, löschen, **exportieren**.
+   Gerätename und „Alles löschen“ stehen unten unter „Einstellungen“.
 
-Gleiche Artikelnummer mehrfach erfasst = mehrere Zeilen (wird nicht automatisch addiert);
-beim Speichern erscheint ein Hinweis.
+Geht die Kamera nicht (keine Erlaubnis, von anderer App belegt …), erscheint ein Hinweis mit
+dem Knopf „Zur Handeingabe wechseln“.
+
+Gleiche Artikelnummer mehrfach erfasst = mehrere Zeilen (wird nicht automatisch addiert).
 
 ## Export und Zusammenführen
 
@@ -38,6 +51,7 @@ In **Liste → Exportieren** entsteht eine Datei `inventur_<Gerät>_<Datum>.zip`
 
 - `inventur_<Gerät>_<Datum>.csv` – Spalten:
   `Datum;Uhrzeit;Gerät/Mitarbeiter;Hersteller;Artikelnummer;Stückzahl;Bemerkung;Foto-Dateiname`
+  (in „Bemerkung“ steht die Beschreibung der Foto-Einträge)
 - Ordner `fotos/` – die Fotos; der Dateiname steht in der letzten CSV-Spalte.
 
 Die ZIP-Datei herunterladen oder per „Teilen“ (Mail, AirDrop …) ins Büro schicken.
@@ -70,8 +84,8 @@ Andere Textfelder, die mit `=`, `+`, `-` oder `@` beginnen, bekommen ein `'` vor
 - Scannen: eingebauter `BarcodeDetector` des Browsers, wenn vorhanden (Android/Chrome); sonst der
   mitgelieferte ZXing-Decoder als WebAssembly (`vendor/`, u. a. für iPhone/iPad).
 - Speicher: IndexedDB (`inventur`); Fotos werden auf max. 1600 px verkleinert (JPEG).
-- **Nach jeder Änderung an der App** in `sw.js` die Zeile `var CACHE = 'inventur-v2'` hochzählen
-  (`v3`, `v4` …) – sonst behalten die Geräte die alte Version. Die Geräte holen die neue Version
+- **Nach jeder Änderung an der App** in `sw.js` die Zeile `var CACHE = 'inventur-v3'` hochzählen
+  (`v4`, `v5` …) – sonst behalten die Geräte die alte Version. Die Geräte holen die neue Version
   beim nächsten Öffnen mit Internet; sie wird beim darauffolgenden Start aktiv.
 - Lokal testen: `python3 -m http.server` im Ordner, dann `http://localhost:8000` (auf `localhost`
   geht die Kamera auch ohne https).

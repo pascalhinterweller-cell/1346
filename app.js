@@ -2,13 +2,14 @@
 (function () {
   'use strict';
 
-  var VERSION = '1.0.1';
+  var VERSION = '2.0.0';
   var DB_NAME = 'inventur';
   var DB_VERSION = 1;
   var STANDARD_HERSTELLER = ['Schüco', 'Dormakaba', 'GEZE', 'Record', 'Sonstige'];
   var FOTO_MAX_KANTE = 1600;
   var FOTO_QUALITAET = 0.8;
   var VORSCHAU_KANTE = 160;
+  var STUECK_STELLEN = 6;
 
   var $ = function (id) { return document.getElementById(id); };
 
@@ -22,7 +23,13 @@
     eintraege: [],      // ohne Foto-Daten, nur Vorschaubild
     entwurfFoto: null,  // { buf, type, thumb }
     fotoLaeuft: false,  // Foto wird gerade verkleinert
-    speichert: false
+    fotoLauf: 0,        // zählt hoch, wenn ein laufendes Foto nicht mehr gebraucht wird
+    speichert: false,
+    seite: 'erfassen',
+    modus: 'scan',      // 'scan' = Kamera, 'hand' = eintippen
+    schritt: 'nummer',  // 'nummer' -> 'stueck' -> speichern; 'foto' = ohne Nummer mit Foto
+    nummer: '',
+    stueck: ''
   };
 
   /* ---------- kleine Helfer ---------- */
@@ -52,6 +59,8 @@
   function datumIso(ts) { var d = new Date(ts); return d.getFullYear() + '-' + zwei(d.getMonth() + 1) + '-' + zwei(d.getDate()); }
   function warte(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   function bereinigen(s) { return String(s == null ? '' : s).replace(/[\u0000-\u001f\u007f]+/g, ' ').trim(); }
+  function nurZiffern(s) { return String(s == null ? '' : s).replace(/\D+/g, '').replace(/^0+/, '').slice(0, STUECK_STELLEN); }
+  function vibrieren(ms) { try { if (navigator.vibrate) navigator.vibrate(ms); } catch (e) { /* egal */ } }
 
   function stueckLesen(text) {
     var t = String(text).trim();
@@ -59,19 +68,41 @@
     return parseInt(t, 10);
   }
 
-  /* ---------- Meldungen ---------- */
+  /* ---------- Meldungen (Balken oben) ---------- */
   var meldungTimer = null;
+  function meldungWeg() { clearTimeout(meldungTimer); $('meldung').classList.add('versteckt'); }
   function meldung(text, opts) {
     opts = opts || {};
     var m = $('meldung');
     leeren(m);
-    m.appendChild(document.createTextNode(text));
-    if (opts.zusatz) m.appendChild(el('small', { text: opts.zusatz }));
-    m.className = 'meldung' + (opts.fehler ? ' fehler' : '');
+    m.appendChild(el('span', { class: 'meldung-text' },
+      el('span', { class: 'meldung-haupt', text: text }),
+      opts.zusatz ? el('small', { text: opts.zusatz }) : null));
+    m.className = 'meldung' + (opts.fehler ? ' fehler' : '') + (opts.ok ? ' ok' : '');
     clearTimeout(meldungTimer);
-    meldungTimer = setTimeout(function () { m.classList.add('versteckt'); }, opts.dauer || (opts.fehler ? 5000 : (opts.zusatz ? 4500 : 2500)));
+    meldungTimer = setTimeout(meldungWeg, opts.dauer || (opts.fehler ? 5000 : 2500));
   }
   function fehlerMeldung(text) { meldung(text, { fehler: true }); }
+
+  /* Bestätigung im Reiter „Erfassen“ (verdeckt keine Bedienelemente) */
+  var erfolgTimer = null, erfolgRueckgaengig = null;
+  function erfolgWeg() { clearTimeout(erfolgTimer); erfolgRueckgaengig = null; $('erfolg').classList.add('versteckt'); }
+  function erfolg(teile, zusatz, rueckgaengigFn, neutral) {
+    // teile: Textstücke, die jeweils nicht umbrochen werden („✓ 4711“, „· 12 Stück“)
+    var haupt = $('erfolg-haupt');
+    leeren(haupt);
+    teile.forEach(function (t, i) {
+      if (i) haupt.appendChild(document.createTextNode(' '));
+      haupt.appendChild(el('span', { class: 'erfolg-teil', text: t }));
+    });
+    $('erfolg-zusatz').textContent = zusatz || '';
+    erfolgRueckgaengig = rueckgaengigFn || null;
+    var box = $('erfolg');
+    box.className = 'erfolg' + (neutral ? ' neutral' : '');
+    meldungWeg();
+    clearTimeout(erfolgTimer);
+    erfolgTimer = setTimeout(erfolgWeg, rueckgaengigFn ? 8000 : 3000);
+  }
 
   /* ---------- Dialog ---------- */
   var dialogOffen = null;
@@ -94,10 +125,10 @@
         fertig(wert);
       }
       dialogOffen = { schliessen: schliessen, schliessbar: opts.schliessbar !== false };
-      (opts.knoepfe || [{ text: 'OK', wert: true, klasse: 'knopf-blau' }]).forEach(function (k) {
+      (opts.knoepfe || [{ text: 'OK', wert: true, klasse: 'knopf-haupt' }]).forEach(function (k) {
         kn.appendChild(el('button', {
           type: 'button',
-          class: 'knopf ' + (k.klasse || 'knopf-grau'),
+          class: 'knopf ' + (k.klasse || 'knopf-neutral'),
           'data-wert': String(k.wert),
           text: k.text,
           onclick: function () {
@@ -116,9 +147,18 @@
       titel: titel,
       inhalt: Array.isArray(text) ? text : [text],
       knoepfe: [
-        { text: jaText, wert: true, klasse: jaKlasse || 'knopf-blau' },
-        { text: neinText || 'Abbrechen', wert: false, klasse: 'knopf-grau' }
+        { text: jaText, wert: true, klasse: jaKlasse || 'knopf-haupt' },
+        { text: neinText || 'Abbrechen', wert: false, klasse: 'knopf-neutral' }
       ]
+    });
+  }
+  /* Enter in einem Dialog-Eingabefeld = erster Knopf */
+  function enterKlicktErstenKnopf(feld) {
+    feld.addEventListener('keydown', function (ev) {
+      if (ev.key !== 'Enter') return;
+      ev.preventDefault();
+      var k = $('dialog-knoepfe').querySelector('button');
+      if (k) k.click();
     });
   }
 
@@ -153,9 +193,6 @@
       try { ergebnis = fn(tx); } catch (e) { try { tx.abort(); } catch (e2) { /* egal */ } fehler(e); }
     });
   }
-  function einstellungLesen(schluessel) {
-    return transaktion('einstellungen', 'readonly', function (tx) { return tx.objectStore('einstellungen').get(schluessel); });
-  }
   function einstellungSchreiben(schluessel, wert) {
     return transaktion('einstellungen', 'readwrite', function (tx) { tx.objectStore('einstellungen').put(wert, schluessel); });
   }
@@ -174,6 +211,7 @@
 
   /* ---------- Reiter ---------- */
   function zeigeSeite(name) {
+    zustand.seite = name;
     ['erfassen', 'hersteller', 'liste'].forEach(function (s) {
       $('seite-' + s).classList.toggle('versteckt', s !== name);
     });
@@ -182,20 +220,24 @@
       b.classList.toggle('aktiv', an);
       if (an) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
     });
+    $('haupt').scrollTop = 0;
     window.scrollTo(0, 0);
+    if (name === 'erfassen') {
+      scan.fehler = false; // beim Zurückkommen die Kamera neu versuchen
+      zeigeErfassen();
+      if (zustand.modus === 'hand' && zustand.schritt === 'nummer') fokusNummer();
+    } else {
+      kameraAbgleichen();
+    }
   }
 
   /* ---------- Anzeige ---------- */
   function zeigeKopf() {
-    $('kopf-geraet').textContent = zustand.geraet;
     $('geraet-anzeige').textContent = zustand.geraet || '–';
   }
 
   function zeigeAktivenHersteller() {
-    var box = $('hersteller-anzeige');
-    box.classList.toggle('fehlt', !zustand.aktiv);
-    $('hersteller-aktiv').textContent = zustand.aktiv || 'Bitte wählen';
-    box.querySelector('.ha-wechseln').textContent = zustand.aktiv ? 'Wechseln' : 'Wählen';
+    $('hersteller-aktiv').textContent = zustand.aktiv || '–';
   }
 
   function zeigeHersteller() {
@@ -210,7 +252,7 @@
           class: 'knopf hersteller-knopf' + (aktiv ? ' aktiv' : ''),
           'aria-pressed': aktiv ? 'true' : 'false',
           onclick: function () { herstellerWaehlen(name); }
-        }, el('span', { text: name }), aktiv ? el('span', { class: 'haken', text: '✓ aktiv' }) : null),
+        }, el('span', { text: name }), aktiv ? el('span', { class: 'haken', text: '✓', 'aria-label': 'gewählt' }) : null),
         el('button', {
           type: 'button',
           class: 'knopf hersteller-weg',
@@ -221,20 +263,19 @@
       ));
     });
     zeigeAktivenHersteller();
+    zeigeErfassen();
   }
 
-  function karte(e, mitKnoepfen) {
+  function karte(e) {
     var mitte = el('div', { class: 'karte-mitte' },
       el('div', { class: 'karte-nummer' + (e.nummer ? '' : ' ohne'), text: e.nummer || 'ohne Nummer (Foto)' }),
       el('div', { class: 'karte-meta', text: e.hersteller + ' · ' + datumText(e.ts) + ' ' + zeitText(e.ts) }),
-      e.bemerkung ? el('div', { class: 'karte-bemerkung', text: e.bemerkung }) : null
+      e.bemerkung ? el('div', { class: 'karte-bemerkung', text: e.bemerkung }) : null,
+      el('div', { class: 'karte-knoepfe' },
+        el('button', { type: 'button', class: 'knopf knopf-neutral', text: 'Bearbeiten', onclick: function () { eintragBearbeiten(e.id); } }),
+        el('button', { type: 'button', class: 'knopf knopf-rot-leer', text: 'Löschen', onclick: function () { eintragLoeschen(e.id); } })
+      )
     );
-    if (mitKnoepfen) {
-      mitte.appendChild(el('div', { class: 'karte-knoepfe' },
-        el('button', { type: 'button', class: 'knopf knopf-grau knopf-klein', text: 'Bearbeiten', onclick: function () { eintragBearbeiten(e.id); } }),
-        el('button', { type: 'button', class: 'knopf knopf-rot-leer knopf-klein', text: 'Löschen', onclick: function () { eintragLoeschen(e.id); } })
-      ));
-    }
     var bild = null;
     if (e.hatFoto) {
       bild = el('img', { class: 'karte-bild', alt: 'Foto ansehen', onclick: function () { fotoZeigen(e.id); } });
@@ -244,7 +285,7 @@
       bild,
       mitte,
       el('div', { class: 'karte-rechts' },
-        el('div', { class: 'karte-stueck' }, String(e.stueck), el('small', { text: ' Stk.' }))
+        el('div', { class: 'karte-stueck' }, String(e.stueck), el('small', { text: ' Stück' }))
       )
     );
   }
@@ -255,17 +296,11 @@
     $('reiter-zaehler').textContent = n ? String(n) : '';
 
     var sortiert = zustand.eintraege.slice().sort(function (a, b) { return b.ts - a.ts || b.id - a.id; });
-
-    var zuletzt = $('zuletzt');
-    leeren(zuletzt);
-    if (!n) zuletzt.appendChild(el('div', { class: 'leer', text: 'Noch nichts erfasst.' }));
-    sortiert.slice(0, 5).forEach(function (e) { zuletzt.appendChild(karte(e, false)); });
-
     var liste = $('liste');
     leeren(liste);
     if (!n) liste.appendChild(el('div', { class: 'leer', text: 'Noch keine Einträge.' }));
     var frag = document.createDocumentFragment();
-    sortiert.forEach(function (e) { frag.appendChild(karte(e, true)); });
+    sortiert.forEach(function (e) { frag.appendChild(karte(e)); });
     liste.appendChild(frag);
 
     var info = $('export-info');
@@ -276,6 +311,7 @@
       info.textContent = 'Letzter Export: ' + datumText(zustand.letzterExport) + ' ' + zeitText(zustand.letzterExport) +
         (neu ? ' – seitdem ' + neu + ' neu/geändert.' : ' – alles exportiert.');
     }
+    $('btn-export').disabled = !n || exportLaeuft;
   }
 
   /* ---------- Hersteller ---------- */
@@ -291,7 +327,6 @@
     zeigeHersteller();
     herstellerSpeichern().then(function () {
       zeigeSeite('erfassen');
-      meldung('Hersteller: ' + name);
     }).catch(function (e) { fehlerMeldung(speicherFehlerText(e)); });
   }
   function herstellerHinzufuegen() {
@@ -328,9 +363,10 @@
       placeholder: 'z. B. Max oder Tablet 2', id: 'f-geraet', enterkeyhint: 'done'
     });
     feld.value = zustand.geraet;
+    enterKlicktErstenKnopf(feld);
     var fehler = el('div', { class: 'dialog-fehler' });
     var knoepfe = [{
-      text: 'Übernehmen', wert: true, klasse: 'knopf-blau',
+      text: 'Übernehmen', wert: true, klasse: 'knopf-haupt',
       pruefen: function () {
         if (bereinigen(feld.value)) return true;
         feld.classList.add('fehler');
@@ -338,7 +374,7 @@
         return false;
       }
     }];
-    if (!erststart) knoepfe.push({ text: 'Abbrechen', wert: false, klasse: 'knopf-grau' });
+    if (!erststart) knoepfe.push({ text: 'Abbrechen', wert: false, klasse: 'knopf-neutral' });
     return dialog({
       titel: erststart ? 'Willkommen!' : 'Name / Gerät ändern',
       inhalt: [
@@ -356,25 +392,179 @@
     });
   }
 
+  /* ---------- Erfassen: Anzeige und Schritte ---------- */
+  function zeigeErfassen() {
+    var seite = $('seite-erfassen');
+    var schritt = zustand.aktiv ? zustand.schritt : 'ohne';
+    seite.setAttribute('data-modus', zustand.modus);
+    seite.setAttribute('data-schritt', schritt);
+    ['scan', 'hand'].forEach(function (m) {
+      var b = $('btn-modus-' + m), an = zustand.modus === m;
+      b.classList.toggle('aktiv', an);
+      b.setAttribute('aria-pressed', an ? 'true' : 'false');
+    });
+    var wert = $('nummer-wert');
+    wert.textContent = zustand.nummer;
+    wert.classList.toggle('lang', zustand.nummer.length > 12);
+    $('f-stueck').textContent = zustand.stueck;
+    if (zustand.stueck) $('stueck-zeile').classList.remove('fehler');
+    zeigeFoto();
+    kameraAbgleichen();
+  }
+
+  function fokusNummer() {
+    try { $('f-nummer').focus(); } catch (e) { /* egal */ }
+  }
+
+  /* Bereit für den nächsten Artikel (im gewählten Modus) */
+  function neuerArtikel() {
+    zustand.schritt = 'nummer';
+    zustand.nummer = '';
+    zustand.stueck = '';
+    $('f-nummer').value = '';
+    $('f-nummer').classList.remove('fehler');
+    $('stueck-zeile').classList.remove('fehler');
+    zeigeErfassen();
+    if (zustand.modus === 'hand' && zustand.seite === 'erfassen') fokusNummer();
+  }
+
+  function nummerGefunden(nummer) {
+    zustand.nummer = nummer;
+    zustand.schritt = 'stueck';
+    zeigeErfassen();
+    entwurfMerken();
+  }
+
+  function modusSetzen(modus) {
+    if (zustand.schritt === 'foto' || zustand.modus === modus) {
+      if (modus === 'hand' && zustand.schritt === 'nummer') fokusNummer();
+      return;
+    }
+    zustand.modus = modus;
+    scan.fehler = false;
+    einstellungSchreiben('modus', modus).catch(function () { /* nur Komfort */ });
+    if (zustand.schritt === 'nummer') neuerArtikel();
+    else { zeigeErfassen(); entwurfMerken(); }
+  }
+
+  function handWeiter() {
+    var feld = $('f-nummer');
+    var nummer = bereinigen(feld.value);
+    if (!nummer) {
+      feld.classList.add('fehler');
+      fehlerMeldung('Bitte zuerst die Artikelnummer eintippen.');
+      fokusNummer();
+      return;
+    }
+    feld.classList.remove('fehler');
+    feld.blur();
+    nummerGefunden(nummer);
+  }
+
+  function nummerKorrigieren() {
+    if (zustand.modus === 'hand') {
+      $('f-nummer').value = zustand.nummer;
+      zustand.schritt = 'nummer';
+      zeigeErfassen();
+      fokusNummer();
+      return;
+    }
+    var feld = el('input', {
+      class: 'eingabe eingabe-nummer', type: 'text', id: 'f-korrektur', autocomplete: 'off', autocapitalize: 'characters',
+      autocorrect: 'off', spellcheck: 'false', maxlength: '250', enterkeyhint: 'done', 'data-fokus': true,
+      'aria-label': 'Artikelnummer'
+    });
+    feld.value = zustand.nummer;
+    enterKlicktErstenKnopf(feld);
+    var fehler = el('div', { class: 'dialog-fehler' });
+    dialog({
+      titel: 'Artikelnummer ändern',
+      inhalt: [feld, fehler],
+      knoepfe: [
+        {
+          text: 'Übernehmen', wert: true, klasse: 'knopf-haupt',
+          pruefen: function () {
+            if (bereinigen(feld.value)) return true;
+            feld.classList.add('fehler');
+            fehler.textContent = 'Bitte eine Artikelnummer eintragen.';
+            return false;
+          }
+        },
+        { text: 'Abbrechen', wert: false, klasse: 'knopf-neutral' }
+      ]
+    }).then(function (ok) {
+      if (!ok || zustand.schritt !== 'stueck') return;
+      zustand.nummer = bereinigen(feld.value);
+      zeigeErfassen();
+      entwurfMerken();
+    });
+  }
+
+  function nummerVerwerfen() {
+    sperreSetzen(zustand.nummer);
+    neuerArtikel();
+    entwurfMerken();
+  }
+
+  /* ---------- Ziffernblock ---------- */
+  function stueckBearbeitbar() {
+    return zustand.seite === 'erfassen' && zustand.aktiv && (zustand.schritt === 'stueck' || zustand.schritt === 'foto');
+  }
+  function ziffer(z) {
+    if (!stueckBearbeitbar()) return;
+    var s = zustand.stueck;
+    if (s.length >= STUECK_STELLEN || (s === '' && z === '0')) return; // nur ganze Zahlen ab 1
+    zustand.stueck = s + z;
+    $('f-stueck').textContent = zustand.stueck;
+    $('stueck-zeile').classList.remove('fehler');
+    entwurfMerken();
+  }
+  function zifferWeg() {
+    if (!stueckBearbeitbar()) return;
+    zustand.stueck = zustand.stueck.slice(0, -1);
+    $('f-stueck').textContent = zustand.stueck;
+    entwurfMerken();
+  }
+
   /* ---------- Entwurf (schützt vor Datenverlust bei Neuladen) ---------- */
   var entwurfTimer = null;
   function entwurfMerken() {
     clearTimeout(entwurfTimer);
     entwurfTimer = setTimeout(function () {
-      einstellungSchreiben('entwurf', {
-        nummer: $('f-nummer').value, stueck: $('f-stueck').value, bemerkung: $('f-bemerkung').value
-      }).catch(function () { /* Entwurf ist nur Komfort */ });
+      var s = zustand.schritt;
+      var p;
+      if (s === 'stueck' || s === 'foto') {
+        p = einstellungSchreiben('entwurf', {
+          nummer: s === 'stueck' ? zustand.nummer : '',
+          stueck: zustand.stueck,
+          bemerkung: s === 'foto' ? $('f-beschreibung').value : '',
+          foto: s === 'foto',
+          modus: zustand.modus
+        });
+      } else {
+        p = einstellungLoeschen('entwurf');
+      }
+      p.catch(function () { /* Entwurf ist nur Komfort */ });
     }, 250);
   }
-  function formularLeeren() {
-    $('f-nummer').value = '';
-    $('f-stueck').value = '';
-    $('f-bemerkung').value = '';
-    $('f-foto').value = '';
-    zustand.entwurfFoto = null;
-    zeigeFotoVorschau();
-    ['f-nummer', 'f-stueck'].forEach(function (id) { $(id).classList.remove('fehler'); });
-    clearTimeout(entwurfTimer);
+  /* Entwurf aus der Datenbank übernehmen (auch im Format der Vorversion) */
+  function entwurfUebernehmen(entwurf, foto) {
+    entwurf = entwurf || {};
+    var nummer = bereinigen(entwurf.nummer);
+    var bemerkung = bereinigen(entwurf.bemerkung);
+    zustand.stueck = nurZiffern(entwurf.stueck);
+    if ((foto && foto.buf) || entwurf.foto) {
+      if (foto && foto.buf) zustand.entwurfFoto = foto;
+      zustand.schritt = 'foto';
+      zustand.nummer = '';
+      // Vorversion: Foto konnte zusätzlich eine Nummer haben – sie geht nicht verloren
+      $('f-beschreibung').value = nummer && entwurf.foto === undefined ? (bemerkung ? nummer + ' – ' + bemerkung : nummer) : bemerkung;
+    } else if (nummer) {
+      zustand.schritt = 'stueck';
+      zustand.nummer = nummer;
+    } else {
+      zustand.stueck = '';
+    }
   }
 
   /* ---------- Foto ---------- */
@@ -434,37 +624,85 @@
     }).then(function (r) { URL.revokeObjectURL(url); return r; },
       function (e) { URL.revokeObjectURL(url); throw e; });
   }
-  function zeigeFotoVorschau() {
+  var vorschau = { foto: null, url: '' };
+  function zeigeFoto() {
     var f = zustand.entwurfFoto;
-    $('foto-vorschau').classList.toggle('versteckt', !f);
-    $('btn-foto').textContent = f ? 'Foto neu aufnehmen' : 'Foto aufnehmen';
-    if (f) $('foto-bild').src = f.thumb; else $('foto-bild').removeAttribute('src');
+    var knopf = $('btn-foto-neu');
+    knopf.classList.toggle('leer', !f);
+    knopf.disabled = zustand.fotoLaeuft;
+    if (vorschau.foto !== f) {
+      // Vorschau in voller Größe statt des kleinen Listenbilds
+      if (vorschau.url) URL.revokeObjectURL(vorschau.url);
+      vorschau.foto = f;
+      vorschau.url = '';
+      if (f) {
+        try { vorschau.url = URL.createObjectURL(new Blob([f.buf], { type: f.type || 'image/jpeg' })); } catch (e) { vorschau.url = ''; }
+        $('foto-bild').src = vorschau.url || f.thumb;
+      } else {
+        $('foto-bild').removeAttribute('src');
+      }
+    }
+    $('foto-text-lang').textContent = zustand.fotoLaeuft ? 'Foto wird verarbeitet …' : (f ? 'Neues Foto' : 'Foto aufnehmen');
+    $('foto-text-kurz').textContent = zustand.fotoLaeuft ? '…' : (f ? 'Neu' : 'Foto');
+  }
+  /* „Ohne Nummer – mit Foto“: öffnet sofort die Kamera des Geräts */
+  function fotoStarten() {
+    if (!zustand.aktiv) return;
+    if (zustand.schritt !== 'foto') {
+      zustand.schritt = 'foto';
+      zustand.nummer = '';
+      zustand.stueck = '';
+      $('f-beschreibung').value = '';
+      zeigeErfassen(); // stoppt die eingebettete Kamera, damit die Foto-App sie bekommt
+      entwurfMerken();
+    }
+    fotoAufnehmen();
+  }
+  function fotoAufnehmen() {
+    if (zustand.fotoLaeuft) return;
+    var eingabe = $('f-foto');
+    eingabe.value = '';
+    eingabe.click();
   }
   function fotoGewaehlt() {
     var eingabe = $('f-foto');
     var datei = eingabe.files && eingabe.files[0];
-    if (!datei) return;
-    var knopf = $('btn-foto');
-    knopf.disabled = true;
-    knopf.textContent = 'Foto wird verarbeitet …';
+    if (!datei || zustand.schritt !== 'foto') return;
+    var lauf = ++zustand.fotoLauf;
     zustand.fotoLaeuft = true;
+    zeigeFoto();
     fotoVerarbeiten(datei).then(function (foto) {
+      if (lauf !== zustand.fotoLauf) return;
       zustand.entwurfFoto = foto;
-      $('f-nummer').classList.remove('fehler');
       return einstellungSchreiben('entwurfFoto', foto).catch(function () { /* Entwurf ist nur Komfort */ });
     }).catch(function () {
-      fehlerMeldung('Das Foto konnte nicht verarbeitet werden. Bitte noch einmal aufnehmen.');
+      if (lauf === zustand.fotoLauf) fehlerMeldung('Das Foto konnte nicht verarbeitet werden. Bitte noch einmal aufnehmen.');
     }).then(function () {
       eingabe.value = '';
-      knopf.disabled = false;
+      if (lauf !== zustand.fotoLauf) return;
       zustand.fotoLaeuft = false;
-      zeigeFotoVorschau();
+      zeigeFoto();
     });
   }
-  function fotoEntfernen() {
+  /* Kamera-App ohne Foto geschlossen: wenn noch gar kein Foto da ist, zurück zum vorherigen Modus */
+  function fotoAbgebrochen() {
+    if (zustand.schritt === 'foto' && !zustand.entwurfFoto && !zustand.fotoLaeuft && !zustand.stueck && !$('f-beschreibung').value) {
+      fotoAbbrechen();
+    }
+  }
+  function fotoAbbrechen() {
+    zustand.fotoLauf++;
+    zustand.fotoLaeuft = false;
     zustand.entwurfFoto = null;
-    zeigeFotoVorschau();
-    einstellungLoeschen('entwurfFoto').catch(function () { /* egal */ });
+    $('f-beschreibung').value = '';
+    $('f-foto').value = '';
+    clearTimeout(entwurfTimer);
+    transaktion('einstellungen', 'readwrite', function (tx) {
+      var s = tx.objectStore('einstellungen');
+      s.delete('entwurf');
+      s.delete('entwurfFoto');
+    }).catch(function () { /* egal */ });
+    neuerArtikel();
   }
   function fotoZeigen(id) {
     fotoLesen(id).then(function (foto) {
@@ -473,7 +711,7 @@
       return dialog({
         titel: 'Foto',
         inhalt: [el('img', { class: 'dialog-bild', src: url, alt: 'Foto zum Eintrag' })],
-        knoepfe: [{ text: 'Schließen', wert: true, klasse: 'knopf-grau' }]
+        knoepfe: [{ text: 'Schließen', wert: true, klasse: 'knopf-neutral' }]
       }).then(function () { URL.revokeObjectURL(url); });
     }).catch(function () { fehlerMeldung('Foto konnte nicht geladen werden.'); });
   }
@@ -485,32 +723,23 @@
   }
 
   function speichern() {
-    if (zustand.speichert) return;
+    if (zustand.speichert || !stueckBearbeitbar()) return;
     // Sonst würde das Foto erst nach dem Speichern fertig und am nächsten Artikel hängen
-    if (zustand.fotoLaeuft) { meldung('Das Foto wird noch verarbeitet. Bitte kurz warten und noch einmal „Speichern“ antippen.'); return; }
-    var fNummer = $('f-nummer'), fStueck = $('f-stueck');
-    var nummer = bereinigen(fNummer.value);
-    var stueck = stueckLesen(fStueck.value);
-    var bemerkung = bereinigen($('f-bemerkung').value);
-    var foto = zustand.entwurfFoto;
-    fNummer.classList.remove('fehler');
-    fStueck.classList.remove('fehler');
+    if (zustand.fotoLaeuft) { meldung('Das Foto wird noch verarbeitet. Bitte kurz warten und dann noch einmal „Speichern“ antippen.', { dauer: 3500 }); return; }
+    var mitFoto = zustand.schritt === 'foto';
+    var nummer = mitFoto ? '' : bereinigen(zustand.nummer);
+    var foto = mitFoto ? zustand.entwurfFoto : null;
+    var bemerkung = mitFoto ? bereinigen($('f-beschreibung').value) : '';
+    var stueck = stueckLesen(zustand.stueck);
 
-    if (!zustand.aktiv) {
-      zeigeSeite('hersteller');
-      fehlerMeldung('Bitte zuerst einen Hersteller antippen.');
+    if (mitFoto && !foto) {
+      fehlerMeldung('Bitte zuerst ein Foto aufnehmen.');
       return;
     }
-    if (!nummer && !foto) {
-      fNummer.classList.add('fehler');
-      fehlerMeldung('Artikelnummer fehlt. Bitte scannen, eintippen oder ein Foto machen.');
-      fNummer.focus();
-      return;
-    }
+    if (!mitFoto && !nummer) { neuerArtikel(); return; }
     if (stueck < 1) {
-      fStueck.classList.add('fehler');
-      fehlerMeldung('Bitte die Stückzahl eintragen (mindestens 1, nur ganze Zahlen).');
-      fStueck.focus();
+      $('stueck-zeile').classList.add('fehler');
+      fehlerMeldung('Bitte die Stückzahl eintippen (mindestens 1).');
       return;
     }
 
@@ -525,10 +754,17 @@
       thumb: foto ? foto.thumb : ''
     };
     var schonDa = nummer ? gleicheNummer(nummer, -1) : 0;
+    var vorher = { schritt: zustand.schritt, nummer: zustand.nummer, stueck: zustand.stueck, foto: foto, bemerkung: $('f-beschreibung').value };
 
     zustand.speichert = true;
-    $('btn-speichern').disabled = true;
     clearTimeout(entwurfTimer); // sonst schreibt der Timer den Entwurf nach dem Speichern zurück
+    // Sofort bereit für den nächsten Artikel. Der Fokus muss noch im Tipp-Ereignis gesetzt werden,
+    // sonst öffnet iOS die Tastatur nicht.
+    zustand.entwurfFoto = null;
+    $('f-beschreibung').value = '';
+    if (nummer) sperreSetzen(nummer);
+    neuerArtikel();
+
     transaktion(['eintraege', 'fotos', 'einstellungen'], 'readwrite', function (tx) {
       var req = tx.objectStore('eintraege').add(eintrag);
       req.onsuccess = function () {
@@ -540,18 +776,38 @@
       s.delete('entwurfFoto');
     }).then(function () {
       zustand.eintraege.push(eintrag);
-      formularLeeren();
       zeigeEintraege();
-      if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
-      meldung('Gespeichert: ' + stueck + ' × ' + (nummer || 'Foto-Artikel'),
-        schonDa ? { zusatz: 'Hinweis: Diese Artikelnummer wurde bereits ' + schonDa + '× erfasst.' } : null);
+      vibrieren(80);
+      erfolg(['✓ ' + (nummer || 'Foto-Artikel'), '· ' + stueck + ' Stück'],
+        schonDa ? 'bereits ' + schonDa + '× erfasst' : '',
+        function () { rueckgaengig(eintrag); });
     }).catch(function (e) {
-      entwurfMerken();
+      // Nichts gespeichert: Eingaben wiederherstellen
+      if (zustand.schritt === 'nummer' && !zustand.nummer) {
+        zustand.schritt = vorher.schritt;
+        zustand.nummer = vorher.nummer;
+        zustand.stueck = vorher.stueck;
+        zustand.entwurfFoto = vorher.foto;
+        $('f-beschreibung').value = vorher.bemerkung;
+        zeigeErfassen();
+        entwurfMerken();
+      }
       fehlerMeldung(speicherFehlerText(e));
     }).then(function () {
       zustand.speichert = false;
-      $('btn-speichern').disabled = false;
     });
+  }
+
+  function rueckgaengig(eintrag) {
+    if (eintrag.id == null || !eintragFinden(eintrag.id)) return;
+    transaktion(['eintraege', 'fotos'], 'readwrite', function (tx) {
+      tx.objectStore('eintraege').delete(eintrag.id);
+      tx.objectStore('fotos').delete(eintrag.id);
+    }).then(function () {
+      zustand.eintraege = zustand.eintraege.filter(function (x) { return x.id !== eintrag.id; });
+      zeigeEintraege();
+      erfolg(['Entfernt:', eintrag.nummer || 'Foto-Artikel', '· ' + eintrag.stueck + ' Stück'], '', null, true);
+    }).catch(function (err) { fehlerMeldung(speicherFehlerText(err)); });
   }
 
   /* ---------- Bearbeiten / Löschen ---------- */
@@ -560,8 +816,8 @@
   function eintragBearbeiten(id) {
     var e = eintragFinden(id);
     if (!e) return;
-    var fNummer = el('input', { class: 'eingabe', type: 'text', id: 'b-nummer', autocomplete: 'off', autocapitalize: 'characters', autocorrect: 'off', spellcheck: 'false' });
-    var fStueck = el('input', { class: 'eingabe eingabe-stueck', type: 'text', id: 'b-stueck', inputmode: 'numeric', pattern: '[0-9]*', maxlength: '6', autocomplete: 'off' });
+    var fNummer = el('input', { class: 'eingabe', type: 'text', id: 'b-nummer', autocomplete: 'off', autocapitalize: 'characters', autocorrect: 'off', spellcheck: 'false', maxlength: '250' });
+    var fStueck = el('input', { class: 'eingabe', type: 'text', id: 'b-stueck', inputmode: 'numeric', pattern: '[0-9]*', maxlength: '6', autocomplete: 'off' });
     var fBem = el('input', { class: 'eingabe', type: 'text', id: 'b-bemerkung', maxlength: '200', autocomplete: 'off' });
     var fehler = el('div', { class: 'dialog-fehler' });
     fNummer.value = e.nummer;
@@ -573,12 +829,12 @@
         el('p', { text: e.hersteller + ' · ' + datumText(e.ts) + ' ' + zeitText(e.ts) }),
         el('label', { class: 'feld-label', for: 'b-nummer', text: 'Artikelnummer' }), fNummer,
         el('label', { class: 'feld-label', for: 'b-stueck', text: 'Stückzahl' }), fStueck,
-        el('label', { class: 'feld-label', for: 'b-bemerkung', text: 'Bemerkung' }), fBem,
+        el('label', { class: 'feld-label', for: 'b-bemerkung', text: 'Beschreibung' }), fBem,
         fehler
       ],
       knoepfe: [
         {
-          text: 'Speichern', wert: true, klasse: 'knopf-gruen',
+          text: 'Speichern', wert: true, klasse: 'knopf-haupt',
           pruefen: function () {
             fNummer.classList.remove('fehler');
             fStueck.classList.remove('fehler');
@@ -595,7 +851,7 @@
             return true;
           }
         },
-        { text: 'Abbrechen', wert: false, klasse: 'knopf-grau' }
+        { text: 'Abbrechen', wert: false, klasse: 'knopf-neutral' }
       ]
     }).then(function (ok) {
       if (!ok) return;
@@ -606,9 +862,10 @@
       neu.bemerkung = bereinigen(fBem.value);
       neu.geaendert = Date.now();
       return transaktion('eintraege', 'readwrite', function (tx) { tx.objectStore('eintraege').put(neu); }).then(function () {
-        zustand.eintraege[zustand.eintraege.indexOf(e)] = neu;
+        var i = zustand.eintraege.indexOf(e);
+        if (i >= 0) zustand.eintraege[i] = neu;
         zeigeEintraege();
-        meldung('Änderung gespeichert.');
+        meldung('Änderung gespeichert.', { ok: true });
       });
     }).catch(function (err) { fehlerMeldung(speicherFehlerText(err)); });
   }
@@ -652,9 +909,9 @@
       titel: 'Alles löschen?',
       inhalt: inhalt,
       knoepfe: [
-        { text: 'Zuerst exportieren', wert: 'export', klasse: 'knopf-blau' },
+        { text: 'Zuerst exportieren', wert: 'export', klasse: 'knopf-haupt' },
         { text: 'Trotzdem löschen …', wert: 'weiter', klasse: 'knopf-rot-leer' },
-        { text: 'Abbrechen', wert: false, klasse: 'knopf-grau' }
+        { text: 'Abbrechen', wert: false, klasse: 'knopf-neutral' }
       ]
     }).then(function (wahl) {
       if (wahl === 'export') { exportieren(); return; }
@@ -830,7 +1087,7 @@
         eintraege.length + (eintraege.length === 1 ? ' Eintrag' : ' Einträge') + ' und ' +
           (mitFoto.length - fehlend) + (mitFoto.length - fehlend === 1 ? ' Foto' : ' Fotos') + ' in der Datei:',
         el('p', {}, el('strong', { text: zipName })),
-        el('a', { class: 'knopf knopf-blau knopf-breit', id: 'export-download', href: url, download: zipName, text: 'Datei herunterladen', onclick: exportGemerkt })
+        el('a', { class: 'knopf knopf-haupt knopf-breit', id: 'export-download', href: url, download: zipName, text: 'Datei herunterladen', onclick: exportGemerkt })
       ];
       if (fehlend) inhalt.splice(1, 0, el('p', { class: 'warnung', text: fehlend + ' Foto(s) konnten nicht gelesen werden.' }));
 
@@ -840,7 +1097,7 @@
       try { teilbar = !!(datei && navigator.canShare && navigator.canShare({ files: [datei] })); } catch (e) { teilbar = false; }
       if (teilbar) {
         inhalt.push(el('button', {
-          type: 'button', class: 'knopf knopf-grau knopf-breit', id: 'export-teilen', style: 'margin-top:10px',
+          type: 'button', class: 'knopf knopf-neutral knopf-breit', id: 'export-teilen',
           text: 'Teilen / Senden …',
           onclick: function () {
             navigator.share({ files: [datei], title: zipName }).then(exportGemerkt).catch(function (err) {
@@ -849,12 +1106,12 @@
           }
         }));
       }
-      inhalt.push(el('p', { class: 'hinweis-klein', text: 'Die Daten bleiben auf dem Gerät, bis sie hier gelöscht werden.' }));
+      inhalt.push(el('p', { class: 'hinweis', text: 'Die Daten bleiben auf dem Gerät, bis sie hier gelöscht werden.' }));
 
       return dialog({
         titel: 'Export fertig',
         inhalt: inhalt,
-        knoepfe: [{ text: 'Schließen', wert: true, klasse: 'knopf-grau' }]
+        knoepfe: [{ text: 'Schließen', wert: true, klasse: 'knopf-neutral' }]
       }).then(function () {
         setTimeout(function () { URL.revokeObjectURL(url); }, 60000); // laufenden Download nicht abschneiden
       });
@@ -863,18 +1120,43 @@
     }).then(function () {
       exportLaeuft = false;
       knopf.disabled = false;
-      knopf.textContent = 'Exportieren (ZIP-Datei)';
+      knopf.textContent = 'Exportieren (Datei fürs Büro)';
+      zeigeEintraege();
     });
   }
 
-  /* ---------- Scanner ---------- */
+  /* ---------- Scanner (Kamerabild direkt im Reiter „Erfassen“) ---------- */
   var WUNSCH_FORMATE = ['code_128', 'code_39', 'code_93', 'codabar', 'ean_13', 'ean_8', 'itf', 'upc_a', 'upc_e',
     'databar', 'databar_expanded', 'databar_limited', 'qr_code', 'micro_qr_code', 'data_matrix', 'aztec', 'pdf417'];
   var MUSS_FORMATE = ['code_128', 'code_39', 'ean_13', 'qr_code', 'data_matrix'];
   var FORMATE_2D = ['qr_code', 'micro_qr_code', 'data_matrix', 'aztec', 'pdf417'];
+  var SPERRE_MS = 4000;  // gleicher Code löst frühestens nach dieser Zeit wieder aus …
+  var WEG_RUNDEN = 5;    // … oder wenn er in so vielen Erkennungs-Runden hintereinander fehlte
+  var WEG_MS = 800;      //     und dabei mindestens so lange aus dem Bild war
 
-  var scan = { aktiv: false, stream: null, spur: null, licht: false, lauf: 0, detektor: null, nativ: false, audio: null };
+  var scan = {
+    aktiv: false, stream: null, spur: null, licht: false, lauf: 0, detektor: null, nativ: false, audio: null,
+    fehler: false,       // Kamerafehler wird angezeigt – nicht von selbst neu starten
+    erkennen: false,     // false = Erkennung pausiert (Treffer wird gerade bearbeitet)
+    sperreWert: '', sperreBis: 0, fehltRunden: 0, fehltSeit: 0
+  };
   var ersatzVersprechen = null;
+
+  function sperreSetzen(wert) {
+    scan.sperreWert = wert || '';
+    scan.sperreBis = Date.now() + SPERRE_MS;
+    scan.fehltRunden = 0;
+    scan.fehltSeit = 0;
+  }
+  /* Nach jeder Erkennungs-Runde: ist der gesperrte Code noch im Bild? */
+  function sperrePruefen(werte, jetzt) {
+    if (!scan.sperreWert) return;
+    if (jetzt > scan.sperreBis) { scan.sperreWert = ''; return; }
+    if (werte.indexOf(scan.sperreWert) >= 0) { scan.fehltRunden = 0; scan.fehltSeit = 0; return; }
+    if (!scan.fehltSeit) scan.fehltSeit = jetzt;
+    scan.fehltRunden++;
+    if (scan.fehltRunden >= WEG_RUNDEN && jetzt - scan.fehltSeit >= WEG_MS) scan.sperreWert = '';
+  }
 
   function skriptLaden(src) {
     return new Promise(function (ok, fehler) {
@@ -920,17 +1202,17 @@
   function kameraFehlerText(e) {
     var n = e && e.name;
     if (n === 'NotAllowedError' || n === 'SecurityError' || n === 'PermissionDeniedError') {
-      return 'Die Kamera ist nicht erlaubt. Bitte den Kamera-Zugriff für diese Seite erlauben (Browser-Einstellungen) – oder die Nummer von Hand eintippen.';
+      return 'Die Kamera ist für diese Seite nicht erlaubt. Bitte in den Browser-Einstellungen den Kamera-Zugriff erlauben – oder die Nummer eintippen.';
     }
-    if (n === 'NotFoundError' || n === 'OverconstrainedError' || n === 'DevicesNotFoundError') return 'Keine Kamera gefunden. Bitte die Nummer von Hand eintippen.';
-    if (n === 'NotReadableError' || n === 'AbortError' || n === 'TrackStartError') return 'Die Kamera wird gerade von einer anderen App benutzt. Bitte andere Apps schließen und noch einmal versuchen.';
-    return 'Die Kamera konnte nicht gestartet werden. Bitte die Nummer von Hand eintippen.';
+    if (n === 'NotFoundError' || n === 'OverconstrainedError' || n === 'DevicesNotFoundError') return 'Keine Kamera gefunden. Bitte die Nummer eintippen.';
+    if (n === 'NotReadableError' || n === 'AbortError' || n === 'TrackStartError') return 'Die Kamera wird gerade von einer anderen App benutzt. Bitte die andere App schließen und noch einmal versuchen.';
+    return 'Die Kamera konnte nicht gestartet werden. Bitte die Nummer eintippen.';
   }
 
   function piepen() {
     try {
       var ctx = scan.audio;
-      if (!ctx) return;
+      if (!ctx || ctx.state !== 'running') return;
       var o = ctx.createOscillator(), g = ctx.createGain();
       o.type = 'square';
       o.frequency.value = 1320;
@@ -941,14 +1223,36 @@
       o.stop(ctx.currentTime + 0.12);
     } catch (e) { /* Ton ist nur Zugabe */ }
   }
+  /* Ton muss durch ein Antippen freigeschaltet werden (iOS) */
+  function tonFreischalten() {
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (AC && !scan.audio) scan.audio = new AC();
+      if (scan.audio && scan.audio.state === 'suspended') scan.audio.resume();
+    } catch (e) { /* egal */ }
+  }
 
-  function scannerStoppen(ausVerlauf) {
-    var warAktiv = scan.aktiv;
+  function kameraSoll() {
+    return zustand.seite === 'erfassen' && !document.hidden && !!zustand.aktiv && !!db && !dialogOffenStart &&
+      zustand.modus === 'scan' && (zustand.schritt === 'nummer' || zustand.schritt === 'stueck') && !scan.fehler;
+  }
+  /* Startet/stoppt die Kamera passend zum Zustand (Reiter, Modus, Schritt, Sichtbarkeit) */
+  function kameraAbgleichen() {
+    var soll = kameraSoll();
+    if (soll && !scan.aktiv) kameraStarten();
+    else if (!soll && scan.aktiv) kameraStoppen();
+    var vorher = scan.erkennen;
+    scan.erkennen = soll && zustand.schritt === 'nummer';
+    if (scan.erkennen && !vorher && scan.sperreWert) sperreSetzen(scan.sperreWert); // Sperrzeit zählt ab jetzt
+  }
+
+  function kameraStoppen() {
     scan.aktiv = false;
+    scan.erkennen = false;
     scan.lauf++;
     var video = $('scanner-video');
     if (scan.stream) {
-      scan.stream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) { /* egal */ } });
+      scan.stream.getTracks().forEach(function (t) { try { t.onended = null; t.stop(); } catch (e) { /* egal */ } });
     }
     scan.stream = null;
     scan.spur = null;
@@ -956,36 +1260,39 @@
     try { video.pause(); } catch (e) { /* egal */ }
     video.srcObject = null;
     video.removeAttribute('src');
-    $('scanner').classList.add('versteckt');
     $('btn-licht').classList.add('versteckt');
-    if (warAktiv && !ausVerlauf && history.state && history.state.scanner) {
-      try { history.back(); } catch (e) { /* egal */ }
-    }
+    $('kamera-text').textContent = 'Kamera ist aus';
   }
 
-  function scannerStarten() {
+  function kameraFehler(text) {
+    kameraStoppen();
+    scan.fehler = true;
+    $('kamera-fehler-text').textContent = text;
+    $('kamera-fehler').classList.remove('versteckt');
+    $('kamera-text').classList.add('versteckt');
+  }
+  function kameraNochmal() {
+    scan.fehler = false;
+    $('kamera-fehler').classList.add('versteckt');
+    $('kamera-text').classList.remove('versteckt');
+    kameraAbgleichen();
+  }
+
+  function kameraStarten() {
     if (scan.aktiv) return;
+    $('kamera-fehler').classList.add('versteckt');
+    $('kamera-text').classList.remove('versteckt');
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      fehlerMeldung(window.isSecureContext === false
-        ? 'Die Kamera funktioniert nur über eine sichere Adresse (https). Bitte die Nummer von Hand eintippen.'
-        : 'Dieses Gerät erlaubt hier keinen Kamera-Zugriff. Bitte die Nummer von Hand eintippen.');
+      kameraFehler(window.isSecureContext === false
+        ? 'Die Kamera funktioniert nur über eine sichere Adresse (https). Bitte die Nummer eintippen.'
+        : 'Dieses Gerät erlaubt hier keinen Kamera-Zugriff. Bitte die Nummer eintippen.');
       return;
     }
     scan.aktiv = true;
     var lauf = ++scan.lauf;
     var video = $('scanner-video');
-    var text = $('scanner-text');
+    var text = $('kamera-text');
     text.textContent = 'Kamera startet …';
-    $('meldung').classList.add('versteckt');
-    $('scanner').classList.remove('versteckt');
-    try { history.pushState({ scanner: true }, ''); } catch (e) { /* egal */ }
-
-    // Ton muss durch das Antippen freigeschaltet werden (iOS)
-    try {
-      var AC = window.AudioContext || window.webkitAudioContext;
-      if (AC && !scan.audio) scan.audio = new AC();
-      if (scan.audio && scan.audio.state === 'suspended') scan.audio.resume();
-    } catch (e) { /* egal */ }
 
     var kamera = navigator.mediaDevices.getUserMedia({
       audio: false,
@@ -1008,7 +1315,11 @@
           $('btn-licht').classList.remove('versteckt');
         }
       } catch (e) { /* kein Licht */ }
-      if (scan.spur) scan.spur.onended = function () { if (lauf === scan.lauf && scan.aktiv) { scannerStoppen(); fehlerMeldung('Die Kamera wurde beendet.'); } };
+      if (scan.spur) {
+        scan.spur.onended = function () {
+          if (lauf === scan.lauf && scan.aktiv) kameraFehler('Die Kamera wurde beendet. Bitte noch einmal versuchen – oder die Nummer eintippen.');
+        };
+      }
 
       return detektor.then(function (d) {
         if (lauf !== scan.lauf) return;
@@ -1016,17 +1327,14 @@
         return scanSchleife(lauf, d);
       }, function () {
         if (lauf !== scan.lauf) return;
-        scannerStoppen();
-        fehlerMeldung('Der Scanner konnte nicht geladen werden. Bitte einmal mit Internet öffnen – oder die Nummer von Hand eintippen.');
+        kameraFehler('Der Scanner konnte nicht geladen werden. Bitte die App einmal mit Internet öffnen – oder die Nummer eintippen.');
       });
     }, function (e) {
       if (lauf !== scan.lauf) return;
-      scannerStoppen();
-      fehlerMeldung(kameraFehlerText(e));
+      kameraFehler(kameraFehlerText(e));
     }).catch(function () {
       if (lauf !== scan.lauf) return;
-      scannerStoppen();
-      fehlerMeldung('Beim Scannen ist ein Fehler aufgetreten. Bitte die Nummer von Hand eintippen.');
+      kameraFehler('Beim Scannen ist ein Fehler aufgetreten. Bitte noch einmal versuchen – oder die Nummer eintippen.');
     });
   }
 
@@ -1035,18 +1343,24 @@
     var letzter = '', fehler = 0;
     function runde() {
       if (lauf !== scan.lauf || !scan.aktiv) return Promise.resolve();
+      if (!scan.erkennen) { letzter = ''; return warte(150).then(runde); }
       if (video.readyState < 2 || !video.videoWidth) return warte(100).then(runde);
       return detektor.detect(video).then(function (codes) {
         fehler = 0;
         if (lauf !== scan.lauf) return;
-        var treffer = (codes || []).filter(function (c) { return c && c.rawValue; })[0];
+        if (!scan.erkennen) return runde();
+        var gelesen = (codes || []).filter(function (c) { return c && c.rawValue && bereinigen(c.rawValue); });
+        sperrePruefen(gelesen.map(function (c) { return bereinigen(c.rawValue); }), Date.now());
+        var treffer = gelesen.filter(function (c) { return bereinigen(c.rawValue) !== scan.sperreWert; })[0];
         if (!treffer) { letzter = ''; return warte(80).then(runde); }
         // Strichcodes müssen zweimal hintereinander gleich gelesen werden (gegen Fehllesungen)
         if (FORMATE_2D.indexOf(treffer.format) < 0 && treffer.rawValue !== letzter) {
           letzter = treffer.rawValue;
           return warte(40).then(runde);
         }
+        letzter = '';
         scanTreffer(treffer.rawValue);
+        return warte(100).then(runde);
       }, function (e) {
         if (lauf !== scan.lauf) return;
         fehler++;
@@ -1069,16 +1383,11 @@
 
   function scanTreffer(wert) {
     var nummer = bereinigen(wert);
+    if (!nummer || zustand.schritt !== 'nummer') return;
+    scan.erkennen = false; // Erkennung pausiert, bis gespeichert oder verworfen wird
     piepen();
-    try { if (navigator.vibrate) navigator.vibrate(120); } catch (e) { /* egal */ }
-    scannerStoppen();
-    if (!nummer) return;
-    var feld = $('f-nummer');
-    feld.value = nummer;
-    feld.classList.remove('fehler');
-    entwurfMerken();
-    meldung('Code erkannt: ' + (nummer.length > 60 ? nummer.slice(0, 60) + ' …' : nummer));
-    if (!$('f-stueck').value) { try { $('f-stueck').focus(); } catch (e) { /* egal */ } }
+    vibrieren(120);
+    nummerGefunden(nummer);
   }
 
   function lichtUmschalten() {
@@ -1090,48 +1399,61 @@
     }).catch(function () { $('btn-licht').classList.add('versteckt'); });
   }
 
+  /* ---------- Tastatur (Ziffern, Löschen, Enter = Speichern) ---------- */
+  function tasteGedrueckt(ev) {
+    if (dialogOffen || !stueckBearbeitbar()) return;
+    if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+    var t = ev.target, tag = t && t.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    if (/^[0-9]$/.test(ev.key)) { ev.preventDefault(); ziffer(ev.key); }
+    else if (ev.key === 'Backspace' || ev.key === 'Delete') { ev.preventDefault(); zifferWeg(); }
+    else if (ev.key === 'Enter') { ev.preventDefault(); speichern(); }
+  }
+
   /* ---------- Start ---------- */
+  var dialogOffenStart = false; // beim ersten Start (Name eintragen) bleibt die Kamera aus
+
   function ereignisse() {
     Array.prototype.forEach.call(document.querySelectorAll('.reiter-knopf'), function (b) {
       b.addEventListener('click', function () { zeigeSeite(b.getAttribute('data-seite')); });
     });
     $('hersteller-anzeige').addEventListener('click', function () { zeigeSeite('hersteller'); });
+    $('btn-hersteller-waehlen').addEventListener('click', function () { zeigeSeite('hersteller'); });
 
-    $('btn-scannen').addEventListener('click', scannerStarten);
-    $('btn-scan-abbrechen').addEventListener('click', function () { scannerStoppen(); });
+    $('btn-modus-scan').addEventListener('click', function () { modusSetzen('scan'); });
+    $('btn-modus-hand').addEventListener('click', function () { modusSetzen('hand'); });
+
     $('btn-licht').addEventListener('click', lichtUmschalten);
-    window.addEventListener('popstate', function () { if (scan.aktiv) scannerStoppen(true); });
-    document.addEventListener('visibilitychange', function () { if (document.hidden && scan.aktiv) scannerStoppen(); });
-    window.addEventListener('pagehide', function () { if (scan.aktiv) scannerStoppen(true); });
+    $('btn-zur-hand').addEventListener('click', function () { modusSetzen('hand'); });
+    $('btn-kamera-nochmal').addEventListener('click', kameraNochmal);
+    document.addEventListener('visibilitychange', kameraAbgleichen);
+    window.addEventListener('pagehide', function () { if (scan.aktiv) kameraStoppen(); });
+    window.addEventListener('pageshow', function (ev) { if (ev.persisted) kameraAbgleichen(); });
+    document.addEventListener('pointerdown', tonFreischalten, true);
+    document.addEventListener('keydown', tonFreischalten, true);
 
-    $('btn-minus').addEventListener('click', function () {
-      var n = stueckLesen($('f-stueck').value);
-      $('f-stueck').value = n > 1 ? String(n - 1) : '1';
-      $('f-stueck').classList.remove('fehler');
-      entwurfMerken();
-    });
-    $('btn-plus').addEventListener('click', function () {
-      var n = stueckLesen($('f-stueck').value);
-      $('f-stueck').value = String(Math.min(999999, n + 1));
-      $('f-stueck').classList.remove('fehler');
-      entwurfMerken();
-    });
-    $('f-stueck').addEventListener('input', function () {
-      var roh = this.value, sauber = roh.replace(/\D+/g, '').slice(0, 6);
-      if (roh !== sauber) this.value = sauber;
-      this.classList.remove('fehler');
-      entwurfMerken();
-    });
-    $('f-nummer').addEventListener('input', function () { this.classList.remove('fehler'); entwurfMerken(); });
-    $('f-bemerkung').addEventListener('input', entwurfMerken);
-    $('f-nummer').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { ev.preventDefault(); $('f-stueck').focus(); } });
-    $('f-stueck').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { ev.preventDefault(); this.blur(); } });
-    $('f-bemerkung').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { ev.preventDefault(); this.blur(); } });
+    $('f-nummer').addEventListener('input', function () { this.classList.remove('fehler'); });
+    $('f-nummer').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { ev.preventDefault(); handWeiter(); } });
+    $('btn-weiter').addEventListener('click', handWeiter);
+    $('nummer-anzeige').addEventListener('click', nummerKorrigieren);
+    $('btn-verwerfen').addEventListener('click', nummerVerwerfen);
 
-    $('btn-foto').addEventListener('click', function () { $('f-foto').click(); });
-    $('f-foto').addEventListener('change', fotoGewaehlt);
-    $('btn-foto-weg').addEventListener('click', fotoEntfernen);
+    // Ziffernblock: Tasten nehmen keinen Fokus (sonst löst Enter die zuletzt getippte Taste erneut aus)
+    $('tasten').addEventListener('mousedown', function (ev) { ev.preventDefault(); });
+    Array.prototype.forEach.call(document.querySelectorAll('#tasten [data-ziffer]'), function (b) {
+      b.addEventListener('click', function () { ziffer(b.getAttribute('data-ziffer')); });
+    });
+    $('btn-ziffer-weg').addEventListener('click', zifferWeg);
     $('btn-speichern').addEventListener('click', speichern);
+    document.addEventListener('keydown', tasteGedrueckt);
+
+    $('btn-foto').addEventListener('click', fotoStarten);
+    $('btn-foto-neu').addEventListener('click', fotoAufnehmen);
+    $('btn-foto-abbrechen').addEventListener('click', fotoAbbrechen);
+    $('f-foto').addEventListener('change', fotoGewaehlt);
+    $('f-foto').addEventListener('cancel', fotoAbgebrochen);
+    $('f-beschreibung').addEventListener('input', entwurfMerken);
+    $('f-beschreibung').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { ev.preventDefault(); this.blur(); } });
 
     $('btn-hersteller-neu').addEventListener('click', herstellerHinzufuegen);
     $('f-hersteller-neu').addEventListener('keydown', function (ev) { if (ev.key === 'Enter') { ev.preventDefault(); herstellerHinzufuegen(); } });
@@ -1143,7 +1465,13 @@
     });
     $('btn-alles-loeschen').addEventListener('click', allesLoeschen);
 
-    $('meldung').addEventListener('click', function () { this.classList.add('versteckt'); });
+    $('meldung').addEventListener('click', meldungWeg);
+    $('btn-rueckgaengig').addEventListener('click', function () {
+      var fn = erfolgRueckgaengig;
+      erfolgWeg();
+      if (fn) fn();
+    });
+    $('erfolg').addEventListener('click', function (ev) { if (ev.target === this || ev.target.closest('.erfolg-text')) erfolgWeg(); });
     $('dialog-hintergrund').addEventListener('click', function (ev) {
       if (ev.target === this && dialogOffen && dialogOffen.schliessbar) dialogOffen.schliessen(false);
     });
@@ -1153,7 +1481,7 @@
     return transaktion(['eintraege', 'einstellungen'], 'readonly', function (tx) {
       var erg = {};
       var s = tx.objectStore('einstellungen');
-      ['geraet', 'hersteller', 'aktiv', 'letzterExport', 'entwurf', 'entwurfFoto'].forEach(function (k) {
+      ['geraet', 'hersteller', 'aktiv', 'letzterExport', 'entwurf', 'entwurfFoto', 'modus'].forEach(function (k) {
         var r = s.get(k);
         r.onsuccess = function () { erg[k] = r.result; };
       });
@@ -1166,6 +1494,7 @@
   function start() {
     $('version').textContent = 'Inventur-App Version ' + VERSION + ' · Daten liegen nur auf diesem Gerät';
     ereignisse();
+    zeigeErfassen();
 
     dbOeffnen().then(function (d) {
       db = d;
@@ -1174,29 +1503,24 @@
       zustand.geraet = erg.geraet || '';
       zustand.eintraege = erg.eintraege;
       zustand.letzterExport = erg.letzterExport || 0;
+      zustand.modus = erg.modus === 'hand' ? 'hand' : 'scan';
       var ersterStart = !Array.isArray(erg.hersteller);
       zustand.hersteller = ersterStart ? STANDARD_HERSTELLER.slice() : erg.hersteller;
       zustand.aktiv = zustand.hersteller.indexOf(erg.aktiv) >= 0 ? erg.aktiv : '';
-      if (erg.entwurf) {
-        $('f-nummer').value = erg.entwurf.nummer || '';
-        $('f-stueck').value = erg.entwurf.stueck || '';
-        $('f-bemerkung').value = erg.entwurf.bemerkung || '';
-      }
-      if (erg.entwurfFoto && erg.entwurfFoto.buf) zustand.entwurfFoto = erg.entwurfFoto;
+      entwurfUebernehmen(erg.entwurf, erg.entwurfFoto);
 
+      dialogOffenStart = !zustand.geraet;
       zeigeKopf();
-      zeigeHersteller();
-      zeigeFotoVorschau();
       zeigeEintraege();
+      zeigeHersteller(); // zeigt auch „Erfassen“ an und startet ggf. die Kamera
 
       var weiter = ersterStart ? herstellerSpeichern() : Promise.resolve();
       return weiter.then(function () {
         if (!zustand.geraet) return geraetAbfragen(true);
       }).then(function () {
-        if (!zustand.aktiv) {
-          zeigeSeite('hersteller');
-          meldung('Bitte zuerst den Hersteller antippen.', { dauer: 4000 });
-        }
+        dialogOffenStart = false;
+        zeigeErfassen();
+        if (zustand.modus === 'hand' && zustand.schritt === 'nummer' && zustand.aktiv) fokusNummer();
       });
     }).catch(function () {
       dialog({
@@ -1205,7 +1529,7 @@
           'Die App kann auf diesem Gerät nichts speichern. Häufige Ursache: „Privates Surfen“ ist eingeschaltet oder der Gerätespeicher ist voll.',
           'Bitte die Seite in einem normalen Browser-Fenster öffnen und neu laden.'
         ],
-        knoepfe: [{ text: 'Neu laden', wert: true, klasse: 'knopf-blau' }],
+        knoepfe: [{ text: 'Neu laden', wert: true, klasse: 'knopf-haupt' }],
         schliessbar: false
       }).then(function () { location.reload(); });
     });
