@@ -184,7 +184,7 @@ main {
   width: 100%;
   min-width: 0;
   min-height: 56px;
-  padding: 4px 4px 4px 14px;
+  padding: 0 0 0 14px;
   color: #fff;
   background: var(--gruen);
   border-radius: 12px;
@@ -196,7 +196,7 @@ main {
 .erfolg-teil { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 .erfolg small { display: block; font-size: 18px; font-weight: 400; }
 .erfolg small:empty { display: none; }
-.erfolg-knopf { flex: 0 0 auto; min-height: 48px; padding: 0 12px; font-size: 18px; color: var(--dunkel); background: #fff; border-color: #fff; }
+.erfolg-knopf { flex: 0 0 auto; min-height: 56px; align-self: stretch; padding: 0 12px; font-size: 18px; color: var(--dunkel); background: #fff; border-color: #fff; }
 .erfolg.neutral .erfolg-knopf { display: none; }
 @media (max-width: 359px) { .erfolg-haupt { font-size: 20px; } .erfolg-knopf { padding: 0 8px; } }
 

@@ -29,7 +29,8 @@
     modus: 'scan',      // 'scan' = Kamera, 'hand' = eintippen
     schritt: 'nummer',  // 'nummer' -> 'stueck' -> speichern; 'foto' = ohne Nummer mit Foto
     nummer: '',
-    stueck: ''
+    stueck: '',
+    scanWert: ''        // roh gelesener Code (für die Scan-Sperre, auch wenn die Nummer korrigiert wurde)
   };
 
   /* ---------- kleine Helfer ---------- */
@@ -428,8 +429,9 @@
     if (zustand.modus === 'hand' && zustand.seite === 'erfassen') fokusNummer();
   }
 
-  function nummerGefunden(nummer) {
+  function nummerGefunden(nummer, scanWert) {
     zustand.nummer = nummer;
+    zustand.scanWert = scanWert || '';
     zustand.schritt = 'stueck';
     zeigeErfassen();
     entwurfMerken();
@@ -501,7 +503,7 @@
   }
 
   function nummerVerwerfen() {
-    sperreSetzen(zustand.nummer);
+    sperreSetzen(zustand.scanWert || zustand.nummer);
     neuerArtikel();
     entwurfMerken();
   }
@@ -762,7 +764,7 @@
     // sonst öffnet iOS die Tastatur nicht.
     zustand.entwurfFoto = null;
     $('f-beschreibung').value = '';
-    if (nummer) sperreSetzen(nummer);
+    if (nummer) sperreSetzen(zustand.scanWert || nummer);
     neuerArtikel();
 
     transaktion(['eintraege', 'fotos', 'einstellungen'], 'readwrite', function (tx) {
@@ -1387,7 +1389,7 @@
     scan.erkennen = false; // Erkennung pausiert, bis gespeichert oder verworfen wird
     piepen();
     vibrieren(120);
-    nummerGefunden(nummer);
+    nummerGefunden(nummer, nummer);
   }
 
   function lichtUmschalten() {
