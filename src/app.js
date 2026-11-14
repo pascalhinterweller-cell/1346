@@ -17,6 +17,38 @@
 
   var $ = function (id) { return document.getElementById(id); };
 
+  /* ---------- Plattform: Browser oder Android-App ----------
+     In der Android-App (Ordner android/) stellt die Hülle das Objekt window.InventurAndroid bereit.
+     Im Browser fehlt es, dann läuft alles wie bisher. Alle Android-Weichen gehen über ANDROID. */
+  var ANDROID = (function () {
+    try {
+      var b = window.InventurAndroid;
+      return b && typeof b.exportBeginnen === 'function' ? b : null;
+    } catch (e) { return null; }
+  })();
+  var nativRueck = {}, nativZaehler = 0;
+  /* Asynchroner Aufruf in die Hülle: sie antwortet später über window.inventurNativ(id, ok, text). */
+  function nativAufruf(methode, args) {
+    return new Promise(function (ok, fehler) {
+      var id = 'r' + (++nativZaehler);
+      nativRueck[id] = function (erfolg, text) {
+        delete nativRueck[id];
+        if (erfolg) ok(text); else fehler(new Error(text || 'Fehler'));
+      };
+      try { ANDROID[methode].apply(ANDROID, args.concat([id])); } catch (e) { delete nativRueck[id]; fehler(e); }
+    });
+  }
+  if (ANDROID) {
+    window.inventurNativ = function (id, erfolg, text) {
+      var f = nativRueck[id];
+      if (f) f(!!erfolg, text == null ? '' : String(text));
+    };
+  }
+  function plattformWachHalten(an) {
+    if (!ANDROID) return;
+    try { ANDROID.wachHalten(!!an); } catch (e) { /* egal */ }
+  }
+
   /* ---------- Zustand ---------- */
   var db = null;
   var zustand = {
@@ -66,6 +98,7 @@
   function bereinigen(s) { return String(s == null ? '' : s).replace(/[\u0000-\u001f\u007f]+/g, ' ').trim(); }
   function nurZiffern(s) { return String(s == null ? '' : s).replace(/\D+/g, '').replace(/^0+/, '').slice(0, STUECK_STELLEN); }
   function vibrieren(ms) {
+    if (ANDROID) { try { ANDROID.vibrieren(ms); } catch (e) { /* egal */ } return; }
     try {
       // vor dem ersten Antippen blockiert der Browser das Vibrieren ohnehin (und meldet einen Fehler in der Konsole)
       if (navigator.userActivation && !navigator.userActivation.hasBeenActive) return;
@@ -1088,7 +1121,6 @@
       var blob = zipErzeugen(dateien);
       dateien = null;
       var zipName = basis + '.zip';
-      var url = URL.createObjectURL(blob);
       // Als exportiert gilt erst, wenn die Datei wirklich heruntergeladen oder geteilt wurde
       var exportGemerkt = function () {
         zustand.letzterExport = jetzt;
@@ -1096,13 +1128,18 @@
         zeigeEintraege();
       };
 
-      var inhalt = [
+      var kopf = [
         eintraege.length + (eintraege.length === 1 ? ' Eintrag' : ' Einträge') + ' und ' +
           (mitFoto.length - fehlend) + (mitFoto.length - fehlend === 1 ? ' Foto' : ' Fotos') + ' in der Datei:',
-        el('p', {}, el('strong', { text: zipName })),
-        el('a', { class: 'knopf knopf-haupt knopf-breit', id: 'export-download', href: url, download: zipName, text: 'Datei herunterladen', onclick: exportGemerkt })
+        el('p', {}, el('strong', { text: zipName }))
       ];
-      if (fehlend) inhalt.splice(1, 0, el('p', { class: 'warnung', text: fehlend + ' Foto(s) konnten nicht gelesen werden.' }));
+      if (fehlend) kopf.splice(1, 0, el('p', { class: 'warnung', text: fehlend + ' Foto(s) konnten nicht gelesen werden.' }));
+      if (ANDROID) return exportDialogAndroid(blob, zipName, kopf, exportGemerkt);
+
+      var url = URL.createObjectURL(blob);
+      var inhalt = kopf.concat([
+        el('a', { class: 'knopf knopf-haupt knopf-breit', id: 'export-download', href: url, download: zipName, text: 'Datei herunterladen', onclick: exportGemerkt })
+      ]);
 
       var datei = null;
       try { datei = new File([blob], zipName, { type: 'application/zip' }); } catch (e) { datei = null; }
@@ -1135,6 +1172,74 @@
       knopf.disabled = false;
       knopf.textContent = 'Exportieren (Datei fürs Büro)';
       zeigeEintraege();
+    });
+  }
+
+  /* Android-App: Blob-Downloads gehen in der WebView nicht. Die ZIP wird stückweise an die Hülle übergeben,
+     die sie in „Downloads“ speichert oder über den Teilen-Dialog verschickt. */
+  var EXPORT_STUECK = 768 * 1024;
+  function androidExportUebergeben(blob, name) {
+    var token = ANDROID.exportBeginnen(name);
+    if (!token) return Promise.reject(new Error('Export-Datei konnte nicht angelegt werden'));
+    var pos = 0;
+    function weiter() {
+      if (pos >= blob.size) {
+        if (!ANDROID.exportAbschliessen(token, blob.size)) throw new Error('Export-Datei ist unvollständig');
+        return token;
+      }
+      return new Promise(function (ok, fehler) {
+        var r = new FileReader();
+        r.onload = function () { var t = String(r.result); ok(t.slice(t.indexOf(',') + 1)); };
+        r.onerror = function () { fehler(r.error || new Error('Lesefehler')); };
+        r.readAsDataURL(blob.slice(pos, pos + EXPORT_STUECK));
+      }).then(function (b64) {
+        if (!ANDROID.exportTeil(token, b64)) throw new Error('Export-Datei konnte nicht geschrieben werden');
+        pos += EXPORT_STUECK;
+        return weiter();
+      });
+    }
+    return Promise.resolve().then(weiter);
+  }
+  function exportDialogAndroid(blob, zipName, kopf, exportGemerkt) {
+    return androidExportUebergeben(blob, zipName).then(function (token) {
+      var ergebnis = el('p', { class: 'hinweis', id: 'export-ergebnis' });
+      var speichernKnopf = el('button', {
+        type: 'button', class: 'knopf knopf-haupt knopf-breit', id: 'export-speichern',
+        text: 'In „Downloads“ speichern',
+        onclick: function () {
+          speichernKnopf.disabled = true;
+          speichernKnopf.textContent = 'Wird gespeichert …';
+          nativAufruf('exportSpeichern', [token]).then(function (name) {
+            exportGemerkt(); // erst nach erfolgreichem Schreiben
+            speichernKnopf.textContent = '✓ In „Downloads“ gespeichert';
+            ergebnis.textContent = 'Gespeichert im Ordner „Downloads“ als ' + (name || zipName) + '.';
+            meldung('Export gespeichert.', { ok: true, zusatz: 'Downloads/' + (name || zipName) });
+          }, function (err) {
+            speichernKnopf.disabled = false;
+            speichernKnopf.textContent = 'In „Downloads“ speichern';
+            fehlerMeldung('Speichern hat nicht geklappt' + (err && err.message ? ': ' + err.message : '.'));
+          });
+        }
+      });
+      var teilenKnopf = el('button', {
+        type: 'button', class: 'knopf knopf-neutral knopf-breit', id: 'export-teilen',
+        text: 'Teilen / Senden …',
+        onclick: function () {
+          // Antwort kommt nur, wenn im Teilen-Dialog wirklich eine App gewählt wurde
+          nativAufruf('exportTeilen', [token]).then(function () {
+            exportGemerkt();
+            ergebnis.textContent = 'Die Datei wurde zum Senden übergeben.';
+          }, function (err) {
+            fehlerMeldung('Teilen hat nicht geklappt' + (err && err.message ? ': ' + err.message : '.'));
+          });
+        }
+      });
+      return dialog({
+        titel: 'Export fertig',
+        inhalt: kopf.concat([speichernKnopf, teilenKnopf, ergebnis,
+          el('p', { class: 'hinweis', text: 'Die Daten bleiben auf dem Gerät, bis sie hier gelöscht werden.' })]),
+        knoepfe: [{ text: 'Schließen', wert: true, klasse: 'knopf-neutral' }]
+      });
     });
   }
 
@@ -1219,8 +1324,15 @@
     });
   }
 
+  function kameraVerboten(e) {
+    var n = e && e.name;
+    return n === 'NotAllowedError' || n === 'SecurityError' || n === 'PermissionDeniedError';
+  }
   function kameraFehlerText(e) {
     var n = e && e.name;
+    if (ANDROID && kameraVerboten(e)) {
+      return 'Die Kamera ist für die App nicht erlaubt. Bitte in den App-Einstellungen unter „Berechtigungen“ die Kamera erlauben – oder die Nummer eintippen.';
+    }
     if (n === 'NotAllowedError' || n === 'SecurityError' || n === 'PermissionDeniedError') {
       return 'Die Kamera ist für diese Seite nicht erlaubt. Bitte in den Browser-Einstellungen den Kamera-Zugriff erlauben – oder die Nummer eintippen.';
     }
@@ -1282,11 +1394,13 @@
     video.removeAttribute('src');
     $('btn-licht').classList.add('versteckt');
     $('kamera-text').textContent = 'Kamera ist aus';
+    plattformWachHalten(false);
   }
 
-  function kameraFehler(text) {
+  function kameraFehler(text, einstellungen) {
     kameraStoppen();
     scan.fehler = true;
+    $('btn-kamera-einstellungen').classList.toggle('versteckt', !(ANDROID && einstellungen));
     $('kamera-fehler-text').textContent = text;
     $('kamera-fehler').classList.remove('versteckt');
     $('kamera-text').classList.add('versteckt');
@@ -1325,6 +1439,7 @@
       if (lauf !== scan.lauf) { stream.getTracks().forEach(function (t) { t.stop(); }); return; }
       scan.stream = stream;
       scan.spur = stream.getVideoTracks()[0] || null;
+      plattformWachHalten(true); // Bildschirm bleibt beim Scannen an
       video.srcObject = stream;
       var p = video.play();
       if (p && p.catch) p.catch(function () { /* autoplay greift trotzdem */ });
@@ -1351,7 +1466,7 @@
       });
     }, function (e) {
       if (lauf !== scan.lauf) return;
-      kameraFehler(kameraFehlerText(e));
+      kameraFehler(kameraFehlerText(e), kameraVerboten(e));
     }).catch(function () {
       if (lauf !== scan.lauf) return;
       kameraFehler('Beim Scannen ist ein Fehler aufgetreten. Bitte noch einmal versuchen – oder die Nummer eintippen.');
@@ -1562,6 +1677,10 @@
   }
 
   function serviceWorkerEinrichten() {
+    if (ANDROID) { // Android-App: alles steckt in der App, kein Service Worker, keine Update-Prüfung
+      offlineStatus('Android-App · läuft immer ohne Internet');
+      return;
+    }
     document.addEventListener('visibilitychange', updatePruefen);
     update.letztePruefung = Date.now(); // gerade frisch geladen: erst beim nächsten Zurückholen prüfen
     if (!('serviceWorker' in navigator) || !window.caches || !/^https?:$/.test(location.protocol)) {
@@ -1583,6 +1702,39 @@
     });
   }
 
+  /* ---------- Android: Zurück-Taste ----------
+     Die Hülle ruft window.inventurZurueck() auf. Antwort 'erledigt' = in der App behandelt,
+     'minimieren' = App in den Hintergrund legen (nie beenden). */
+  function eingabeAngefangen() {
+    return zustand.speichert || zustand.fotoLaeuft || zustand.schritt === 'stueck' || zustand.schritt === 'foto' ||
+      !!bereinigen($('f-nummer').value);
+  }
+  function androidZurueck() {
+    if (dialogOffen) {
+      if (dialogOffen.schliessbar) dialogOffen.schliessen(false);
+      return 'erledigt';
+    }
+    if (!db) return 'minimieren';
+    if (zustand.seite !== 'erfassen') { zeigeSeite('erfassen'); return 'erledigt'; }
+    if (!eingabeAngefangen()) return 'minimieren';
+    dialog({
+      titel: 'App verlassen?',
+      inhalt: ['Die angefangene Eingabe bleibt erhalten und ist beim nächsten Öffnen wieder da.'],
+      knoepfe: [
+        { text: 'Weiter erfassen', wert: false, klasse: 'knopf-haupt' },
+        { text: 'App verlassen', wert: true, klasse: 'knopf-neutral' }
+      ]
+    }).then(function (verlassen) {
+      if (!verlassen) return;
+      var sichern = zustand.schritt === 'stueck' || zustand.schritt === 'foto' ? entwurfSchreiben() : Promise.resolve();
+      sichern.catch(function () { /* Entwurf ist nur Komfort */ }).then(function () {
+        try { ANDROID.minimieren(); } catch (e) { /* egal */ }
+      });
+    });
+    return 'erledigt';
+  }
+  if (ANDROID) window.inventurZurueck = androidZurueck;
+
   /* ---------- Start ---------- */
   var dialogOffenStart = false; // beim ersten Start (Name eintragen) bleibt die Kamera aus
 
@@ -1599,6 +1751,9 @@
     $('btn-licht').addEventListener('click', lichtUmschalten);
     $('btn-zur-hand').addEventListener('click', function () { modusSetzen('hand'); });
     $('btn-kamera-nochmal').addEventListener('click', kameraNochmal);
+    $('btn-kamera-einstellungen').addEventListener('click', function () {
+      try { ANDROID.appEinstellungen(); } catch (e) { /* egal */ }
+    });
     document.addEventListener('visibilitychange', kameraAbgleichen);
     window.addEventListener('pagehide', function () { if (scan.aktiv) kameraStoppen(); });
     window.addEventListener('pageshow', function (ev) { if (ev.persisted) kameraAbgleichen(); });

@@ -1,0 +1,19 @@
+# Android-Build
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+android/.kotlin/
+*.iml
+dist/
+*.apk
+*.aab
+# Signierschlüssel nie einchecken
+*.jks
+*.keystore
+*.p12
+passwort.txt
+keystore.properties
+# Node (falls je verwendet)
+node_modules/

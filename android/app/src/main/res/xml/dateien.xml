@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Für FileProvider: Fotos der Kamera-App und Export-Dateien zum Teilen (beides im Cache der App) -->
+<paths>
+    <cache-path name="fotos" path="fotos/" />
+    <cache-path name="export" path="export/" />
+</paths>

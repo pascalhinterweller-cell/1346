@@ -9,7 +9,9 @@ In src/index.html steht für jede einzubettende Datei ein Platzhalter @@pfad@@ (
   .png       -> data:image/png;base64,...
   .wasm      -> Base64 (ohne Zeilenumbrüche)
 
-Aufruf:  python3 build.py        (nur Standardbibliothek)
+Aufruf:  python3 build.py                   (nur Standardbibliothek)
+         python3 build.py --android ORDNER  schreibt nur ORDNER/index.html für die Android-App
+                                            (ohne sw.js; wird vom Gradle-Build in android/ aufgerufen)
 """
 import base64
 import os
@@ -47,7 +49,8 @@ def einbetten(rel):
     sys.exit('Fehler: unbekannter Dateityp für Platzhalter @@%s@@' % rel)
 
 
-def main():
+def bauen():
+    """Erzeugt den Inhalt von index.html; liefert (html, version)."""
     vorlage = lesen('index.html')
     platzhalter = re.findall(r'@@([A-Za-z0-9_./-]+)@@', vorlage)
     if not platzhalter:
@@ -63,12 +66,29 @@ def main():
         sys.exit('Fehler: index.html verweist noch auf eine Datei: %s' % rest)
 
     version = re.search(r'<meta name="inventur-version" content="([^"]+)"', html)
-    with open(os.path.join(HIER, 'index.html'), 'w', encoding='utf-8', newline='\n') as f:
-        f.write(html)
-    with open(os.path.join(HIER, 'sw.js'), 'w', encoding='utf-8', newline='\n') as f:
-        f.write(lesen('sw.js'))
+    return html, (version.group(1) if version else '?')
+
+
+def schreiben(pfad, text):
+    with open(pfad, 'w', encoding='utf-8', newline='\n') as f:
+        f.write(text)
+
+
+def main():
+    html, version = bauen()
+    if len(sys.argv) == 3 and sys.argv[1] == '--android':
+        # Android-App: dieselbe index.html, aber ohne sw.js (die App ist ohnehin offline)
+        ziel = os.path.abspath(sys.argv[2])
+        os.makedirs(ziel, exist_ok=True)
+        schreiben(os.path.join(ziel, 'index.html'), html)
+        print('Android: %s  %s' % (os.path.join(ziel, 'index.html'), version))
+        return
+    if len(sys.argv) > 1:
+        sys.exit('Aufruf: python3 build.py  oder  python3 build.py --android ORDNER')
+    schreiben(os.path.join(HIER, 'index.html'), html)
+    schreiben(os.path.join(HIER, 'sw.js'), lesen('sw.js'))
     groesse = os.path.getsize(os.path.join(HIER, 'index.html'))
-    print('index.html  %s  %d Bytes (%.2f MB)' % (version.group(1) if version else '?', groesse, groesse / 1048576))
+    print('index.html  %s  %d Bytes (%.2f MB)' % (version, groesse, groesse / 1048576))
     print('sw.js       %d Bytes' % os.path.getsize(os.path.join(HIER, 'sw.js')))
 
 
