@@ -91,6 +91,9 @@ public class MainActivity extends ComponentActivity {
     // Kamera-Berechtigung: wartende Anfrage der Seite (getUserMedia) und/oder wartendes Foto
     private PermissionRequest wartendeKameraAnfrage;
     private boolean fotoWartetAufBerechtigung;
+    // Läuft gerade der Berechtigungs-Dialog? Dann die WebView in onPause NICHT pausieren: sonst wird die Seite
+    // „unsichtbar“, app.js beendet den wartenden Kamera-Start, verwirft die Antwort und fragt sofort erneut (Schleife).
+    private boolean berechtigungLaeuft;
     private ActivityResultLauncher<String> kameraBerechtigung;
 
     // Foto über <input type="file" capture>
@@ -162,6 +165,7 @@ public class MainActivity extends ComponentActivity {
         s.setDomStorageEnabled(true);
         s.setMediaPlaybackRequiresUserGesture(false);
         s.setAllowFileAccess(false);
+        s.setAllowContentAccess(false); // content://-Adressen braucht die Seite nicht (Dateiauswahl ist davon nicht betroffen)
         s.setSupportZoom(false);
         s.setBuiltInZoomControls(false);
         s.setSupportMultipleWindows(false);
@@ -188,8 +192,14 @@ public class MainActivity extends ComponentActivity {
 
     @Override
     protected void onPause() {
-        if (web != null) web.onPause();
+        if (web != null && !berechtigungLaeuft) web.onPause();
         super.onPause();
+    }
+
+    @Override
+    protected void onStop() {
+        if (web != null) web.onPause(); // spätestens jetzt (auch wenn onPause es wegen des Dialogs ausgelassen hat)
+        super.onStop();
     }
 
     @Override
@@ -224,7 +234,10 @@ public class MainActivity extends ComponentActivity {
         @Override
         public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
             Uri url = request.getUrl();
-            if (HOST.equals(url.getHost())) return lader.shouldInterceptRequest(url);
+            if (HOST.equals(url.getHost())) {
+                WebResourceResponse r = lader.shouldInterceptRequest(url);
+                if (r != null) return r; // sonst (Pfad außerhalb /app/, http) nicht ins Netz, sondern blockieren
+            }
             // Die App braucht kein Netz: fremde Adressen gar nicht erst laden
             return new WebResourceResponse("text/plain", "utf-8", 403, "Forbidden", null, new ByteArrayInputStream(new byte[0]));
         }
@@ -262,6 +275,7 @@ public class MainActivity extends ComponentActivity {
             }
             if (wartendeKameraAnfrage != null) wartendeKameraAnfrage.deny();
             wartendeKameraAnfrage = request;
+            berechtigungLaeuft = true;
             kameraBerechtigung.launch(Manifest.permission.CAMERA);
         }
 
@@ -278,6 +292,7 @@ public class MainActivity extends ComponentActivity {
                 if (hatKamera()) kameraAppStarten();
                 else {
                     fotoWartetAufBerechtigung = true;
+                    berechtigungLaeuft = true;
                     kameraBerechtigung.launch(Manifest.permission.CAMERA);
                 }
             } else {
@@ -292,6 +307,7 @@ public class MainActivity extends ComponentActivity {
     }
 
     private void kameraBerechtigungErgebnis(boolean erlaubt) {
+        berechtigungLaeuft = false;
         PermissionRequest anfrage = wartendeKameraAnfrage;
         wartendeKameraAnfrage = null;
         if (anfrage != null) {
