@@ -593,6 +593,32 @@ main {
 .meldung-haupt { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
 .meldung small { display: block; font-size: 18px; font-weight: 400; }
 
+/* ---------- Update-Hinweis (im Fluss, verdeckt nichts; Dialoge liegen darüber) ---------- */
+.update-balken {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  flex: 0 0 auto;
+  display: block;
+  width: 100%;
+  min-height: 56px;
+  margin: 0;
+  padding: max(10px, var(--oben)) max(14px, var(--rechts)) 10px max(14px, var(--links));
+  font: inherit;
+  font-size: 19px;
+  font-weight: 800;
+  text-align: center;
+  color: #fff;
+  background: var(--akzent);
+  border: 0;
+  border-bottom: 3px solid #fff;
+  cursor: pointer;
+}
+.update-balken:focus-visible { outline: 3px solid var(--dunkel); outline-offset: -3px; }
+.update-balken:not(.versteckt) ~ .seite { padding-top: 12px; }
+.update-balken:not(.versteckt) ~ .seite-erfassen { padding-top: var(--abstand); }
+.version { font-size: 14px; }
+
 /* ---------- Querformat ---------- */
 @media (orientation: landscape) and (min-width: 560px) {
   .seite-erfassen { max-width: 1100px; }

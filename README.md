@@ -77,6 +77,21 @@ Andere Textfelder, die mit `=`, `+`, `-` oder `@` beginnen, bekommen ein `'` vor
   Deshalb: am Ende jedes Zähltags exportieren.
 - „Alles löschen“ erst benutzen, wenn die Export-Datei im Büro angekommen und geprüft ist.
 
+## Update kommt nicht an
+
+1. Unter **Liste → Einstellungen** ganz unten nachsehen, welche Version läuft (z. B. „Version v5“).
+2. Prüfen, ob auf dem Webspace wirklich die neue `sw.js` liegt: die Adresse der App mit `sw.js`
+   am Ende im Browser öffnen (z. B. `https://example.de/inventur/sw.js`) – in der dritten Zeile
+   muss die neue Nummer stehen (`var CACHE = 'inventur-v5'`). Steht dort noch die alte, wurden
+   die Dateien nicht (vollständig) hochgeladen.
+3. Die App **einmal ganz schließen** (aus der Liste der offenen Apps wegwischen) und mit Internet
+   neu öffnen, kurz warten. Ggf. ein zweites Mal schließen und öffnen. Wichtig beim Wechsel von
+   einer Version vor v5: Die alte Version kennt das automatische Neuladen noch nicht, deshalb ist
+   hier einmal Schließen und neu Öffnen nötig. Ab v5 erledigt die App das selbst.
+4. Nur im Notfall: vorher **exportieren**, dann in den Browser-Einstellungen **nur den Cache**
+   (zwischengespeicherte Bilder und Dateien) leeren – **nicht** die Website-Daten/Cookies,
+   sonst sind alle Einträge auf dem Gerät weg.
+
 ## Technik (für die Pflege)
 
 - Dateien: `index.html`, `style.css`, `app.js`, `sw.js` (Offline-Cache), `manifest.webmanifest`,
@@ -84,8 +99,12 @@ Andere Textfelder, die mit `=`, `+`, `-` oder `@` beginnen, bekommen ein `'` vor
 - Scannen: eingebauter `BarcodeDetector` des Browsers, wenn vorhanden (Android/Chrome); sonst der
   mitgelieferte ZXing-Decoder als WebAssembly (`vendor/`, u. a. für iPhone/iPad).
 - Speicher: IndexedDB (`inventur`); Fotos werden auf max. 1600 px verkleinert (JPEG).
-- **Nach jeder Änderung an der App** in `sw.js` die Zeile `var CACHE = 'inventur-v4'` hochzählen
-  (`v5`, `v6` …) – sonst behalten die Geräte die alte Version. Die Geräte holen die neue Version
-  beim nächsten Öffnen mit Internet; sie wird beim darauffolgenden Start aktiv.
+- **Nach jeder Änderung an der App** in `sw.js` die Zeile `var CACHE = 'inventur-v5'` hochzählen
+  (`v6`, `v7` …) und in `app.js` die Zeile `var VERSION = 'v5'` genauso – sonst behalten die
+  Geräte die alte Version. Die laufende App sucht beim Öffnen und beim Zurückholen in den
+  Vordergrund (höchstens einmal pro Minute) nach einer neuen Version. Ist gerade nichts
+  eingegeben, lädt sie sich selbst neu; sonst erscheint oben der Balken „Neue Version verfügbar –
+  tippen zum Laden“ (der angefangene Eintrag bleibt dabei erhalten).
+- Welche Version läuft, steht unter **Liste → Einstellungen** ganz unten („Version v5“).
 - Lokal testen: `python3 -m http.server` im Ordner, dann `http://localhost:8000` (auf `localhost`
   geht die Kamera auch ohne https).

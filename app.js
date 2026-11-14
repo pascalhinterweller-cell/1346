@@ -2,7 +2,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '2.0.0';
+  var VERSION = 'v5'; // muss zu CACHE in sw.js passen: 'inventur-' + VERSION
   var DB_NAME = 'inventur';
   var DB_VERSION = 1;
   var STANDARD_HERSTELLER = ['Schüco', 'Dormakaba', 'GEZE', 'Record', 'Sonstige'];
@@ -530,23 +530,24 @@
 
   /* ---------- Entwurf (schützt vor Datenverlust bei Neuladen) ---------- */
   var entwurfTimer = null;
+  function entwurfSchreiben() {
+    clearTimeout(entwurfTimer);
+    var s = zustand.schritt;
+    if (s === 'stueck' || s === 'foto') {
+      return einstellungSchreiben('entwurf', {
+        nummer: s === 'stueck' ? zustand.nummer : '',
+        stueck: zustand.stueck,
+        bemerkung: s === 'foto' ? $('f-beschreibung').value : '',
+        foto: s === 'foto',
+        modus: zustand.modus
+      });
+    }
+    return einstellungLoeschen('entwurf');
+  }
   function entwurfMerken() {
     clearTimeout(entwurfTimer);
     entwurfTimer = setTimeout(function () {
-      var s = zustand.schritt;
-      var p;
-      if (s === 'stueck' || s === 'foto') {
-        p = einstellungSchreiben('entwurf', {
-          nummer: s === 'stueck' ? zustand.nummer : '',
-          stueck: zustand.stueck,
-          bemerkung: s === 'foto' ? $('f-beschreibung').value : '',
-          foto: s === 'foto',
-          modus: zustand.modus
-        });
-      } else {
-        p = einstellungLoeschen('entwurf');
-      }
-      p.catch(function () { /* Entwurf ist nur Komfort */ });
+      entwurfSchreiben().catch(function () { /* Entwurf ist nur Komfort */ });
     }, 250);
   }
   /* Entwurf aus der Datenbank übernehmen (auch im Format der Vorversion) */
@@ -1412,6 +1413,103 @@
     else if (ev.key === 'Enter') { ev.preventDefault(); speichern(); }
   }
 
+  /* ---------- Updates: neue Version sichtbar machen, ohne Eingaben zu verlieren ---------- */
+  var UPDATE_RELOAD = 'inventur-update-reload';   // sessionStorage: Zeitpunkt des letzten Update-Neuladens
+  var UPDATE_EINGABE = 'inventur-update-eingabe'; // sessionStorage: angefangene Textfelder über das Neuladen retten
+  var UPDATE_PRUEF_ABSTAND = 60000;
+  var update = { reg: null, letztePruefung: 0, verfuegbar: false, laedt: false };
+  var startBereit = Promise.resolve();
+
+  function sitzungLesen(k) { try { return window.sessionStorage.getItem(k); } catch (e) { return null; } }
+  function sitzungSchreiben(k, v) {
+    try { window.sessionStorage.setItem(k, v); return window.sessionStorage.getItem(k) === v; } catch (e) { return false; }
+  }
+  function sitzungLoeschen(k) { try { window.sessionStorage.removeItem(k); } catch (e) { /* egal */ } }
+
+  /* Ist gerade etwas angefangen, das ein Neuladen stören würde? */
+  function eingabeLaeuft() {
+    if (!db || dialogOffen || dialogOffenStart) return true;
+    if (zustand.speichert || zustand.fotoLaeuft) return true;
+    if (zustand.schritt !== 'nummer' || zustand.nummer || zustand.stueck || zustand.entwurfFoto) return true;
+    if (bereinigen($('f-nummer').value) || bereinigen($('f-beschreibung').value) || bereinigen($('f-hersteller-neu').value)) return true;
+    if (erfolgRueckgaengig) return true; // „Rückgängig“ ist noch möglich
+    return false;
+  }
+
+  function updateBalkenZeigen() {
+    update.verfuegbar = true;
+    $('update-balken').classList.remove('versteckt');
+  }
+
+  /* Entwurf sichern, dann neu laden */
+  function updateLaden() {
+    if (update.laedt) return;
+    if (zustand.speichert || zustand.fotoLaeuft) {
+      meldung(zustand.fotoLaeuft ? 'Das Foto wird noch verarbeitet. Bitte gleich noch einmal tippen.' : 'Es wird noch gespeichert. Bitte gleich noch einmal tippen.', { dauer: 3500 });
+      return;
+    }
+    update.laedt = true;
+    sitzungSchreiben(UPDATE_RELOAD, String(Date.now()));
+    sitzungSchreiben(UPDATE_EINGABE, JSON.stringify({
+      nummer: zustand.schritt === 'nummer' ? $('f-nummer').value : '',
+      herstellerNeu: $('f-hersteller-neu').value
+    }));
+    var sichern = db ? entwurfSchreiben() : Promise.resolve();
+    sichern.catch(function () { /* Entwurf ist nur Komfort */ }).then(function () { location.reload(); });
+  }
+
+  /* Neuer Service Worker hat übernommen */
+  function updateUebernommen() {
+    if (update.verfuegbar || update.laedt) return;
+    startBereit.then(function () {
+      if (update.verfuegbar || update.laedt) return;
+      var letzter = sitzungLesen(UPDATE_RELOAD);
+      // Endlos-Schutz: nur automatisch neu laden, wenn das nicht gerade erst passiert ist
+      // (und sessionStorage funktioniert – sonst lässt sich das nicht prüfen).
+      var autoErlaubt = sitzungSchreiben('inventur-update-test', '1') &&
+        !(letzter && Date.now() - Number(letzter) < 30000);
+      sitzungLoeschen('inventur-update-test');
+      if (autoErlaubt && !eingabeLaeuft()) updateLaden();
+      else updateBalkenZeigen();
+    });
+  }
+
+  function updatePruefen() {
+    if (!update.reg || document.visibilityState !== 'visible') return;
+    var jetzt = Date.now();
+    if (jetzt - update.letztePruefung < UPDATE_PRUEF_ABSTAND) return;
+    update.letztePruefung = jetzt;
+    update.reg.update().catch(function () { /* offline – später wieder */ });
+  }
+
+  /* Nach einem Update-Neuladen die angefangenen Textfelder zurückholen */
+  function updateEingabeZurueck() {
+    var roh = sitzungLesen(UPDATE_EINGABE);
+    if (!roh) return;
+    sitzungLoeschen(UPDATE_EINGABE);
+    var e;
+    try { e = JSON.parse(roh) || {}; } catch (x) { return; }
+    if (typeof e.nummer === 'string' && e.nummer && zustand.schritt === 'nummer') $('f-nummer').value = e.nummer.slice(0, 250);
+    if (typeof e.herstellerNeu === 'string' && e.herstellerNeu) $('f-hersteller-neu').value = e.herstellerNeu.slice(0, 60);
+  }
+
+  function serviceWorkerEinrichten() {
+    if (!('serviceWorker' in navigator) || !/^https?:$/.test(location.protocol)) return;
+    var sw = navigator.serviceWorker;
+    var hatteController = !!sw.controller;
+    sw.addEventListener('controllerchange', function () {
+      if (!hatteController) { hatteController = true; return; } // Erststart: nichts zu tun
+      updateUebernommen();
+    });
+    document.addEventListener('visibilitychange', updatePruefen);
+    window.addEventListener('load', function () {
+      sw.register('sw.js', { updateViaCache: 'none' }).then(function (reg) {
+        update.reg = reg;
+        update.letztePruefung = Date.now(); // register() prüft selbst schon
+      }).catch(function () { /* App läuft auch ohne */ });
+    });
+  }
+
   /* ---------- Start ---------- */
   var dialogOffenStart = false; // beim ersten Start (Name eintragen) bleibt die Kamera aus
 
@@ -1468,6 +1566,7 @@
     $('btn-alles-loeschen').addEventListener('click', allesLoeschen);
 
     $('meldung').addEventListener('click', meldungWeg);
+    $('update-balken').addEventListener('click', updateLaden);
     $('btn-rueckgaengig').addEventListener('click', function () {
       var fn = erfolgRueckgaengig;
       erfolgWeg();
@@ -1494,10 +1593,12 @@
   }
 
   function start() {
-    $('version').textContent = 'Inventur-App Version ' + VERSION + ' · Daten liegen nur auf diesem Gerät';
+    $('version').textContent = 'Version ' + VERSION + ' · Daten liegen nur auf diesem Gerät';
     ereignisse();
     zeigeErfassen();
 
+    var bereitMelden;
+    startBereit = new Promise(function (r) { bereitMelden = r; });
     dbOeffnen().then(function (d) {
       db = d;
       return laden();
@@ -1510,11 +1611,13 @@
       zustand.hersteller = ersterStart ? STANDARD_HERSTELLER.slice() : erg.hersteller;
       zustand.aktiv = zustand.hersteller.indexOf(erg.aktiv) >= 0 ? erg.aktiv : '';
       entwurfUebernehmen(erg.entwurf, erg.entwurfFoto);
+      updateEingabeZurueck();
 
       dialogOffenStart = !zustand.geraet;
       zeigeKopf();
       zeigeEintraege();
       zeigeHersteller(); // zeigt auch „Erfassen“ an und startet ggf. die Kamera
+      bereitMelden(); // ab hier kann ein Update entscheiden, ob neu geladen werden darf
 
       var weiter = ersterStart ? herstellerSpeichern() : Promise.resolve();
       return weiter.then(function () {
@@ -1525,6 +1628,7 @@
         if (zustand.modus === 'hand' && zustand.schritt === 'nummer' && zustand.aktiv) fokusNummer();
       });
     }).catch(function () {
+      bereitMelden();
       dialog({
         titel: 'Speicher nicht verfügbar',
         inhalt: [
@@ -1541,12 +1645,8 @@
       if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(function () { /* egal */ });
     } catch (e) { /* egal */ }
 
-    // Offline-Betrieb
-    if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
-      window.addEventListener('load', function () {
-        navigator.serviceWorker.register('sw.js').catch(function () { /* App läuft auch ohne */ });
-      });
-    }
+    // Offline-Betrieb und Updates
+    serviceWorkerEinrichten();
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);

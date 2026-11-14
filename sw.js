@@ -1,6 +1,6 @@
 /* Service Worker: legt alle Dateien der App im Gerät ab, damit sie ohne Internet läuft.
    WICHTIG: Bei jeder Änderung an der App die Versionsnummer in CACHE erhöhen. */
-var CACHE = 'inventur-v4';
+var CACHE = 'inventur-v5'; // muss zu VERSION in app.js passen ('inventur-' + VERSION)
 var DATEIEN = [
   './',
   'index.html',
