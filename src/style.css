@@ -493,6 +493,7 @@ main {
 .einstellung-label { color: var(--leise); }
 .geraet-anzeige { font-size: 22px; font-weight: 700; overflow-wrap: anywhere; }
 .version { margin-top: 20px; font-size: 16px; }
+.version.offline-status { margin-top: -8px; }
 
 /* ---------- Reiter unten ---------- */
 .reiter {

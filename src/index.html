@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Inventur</title>
+<meta name="theme-color" content="#111820">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Inventur">
+<meta name="format-detection" content="telephone=no">
+<meta name="inventur-version" content="v6">
+<link rel="icon" type="image/png" sizes="192x192" href="@@icons/icon-192.png@@">
+<link rel="apple-touch-icon" href="@@icons/apple-touch-icon.png@@">
+<style>
+@@style.css@@
+</style>
+</head>
+<body>
+
+<main id="haupt">
+  <!-- Erscheint, wenn eine neue Version bereitliegt, aber gerade etwas eingegeben wird -->
+  <button type="button" id="update-balken" class="update-balken versteckt" aria-live="polite">Neue Version verfügbar – tippen zum Laden</button>
+
+  <!-- Reiter 1: Erfassen -->
+  <section id="seite-erfassen" class="seite seite-erfassen" data-modus="scan" data-schritt="ohne">
+
+    <!-- Ohne Hersteller: nur diese Aufforderung -->
+    <div id="ohne-hersteller" class="ohne-hersteller">
+      <p class="ohne-text">Für welchen Hersteller wird gezählt?</p>
+      <button type="button" id="btn-hersteller-waehlen" class="knopf knopf-haupt knopf-breit knopf-gross">Hersteller wählen</button>
+    </div>
+
+    <div class="erf-kopf">
+      <!-- Bestätigung nach dem Speichern: steht kurz an Stelle des Herstellers -->
+      <div id="erfolg" class="erfolg versteckt" role="status" aria-live="polite">
+        <span class="erfolg-text"><span id="erfolg-haupt" class="erfolg-haupt"></span><small id="erfolg-zusatz"></small></span>
+        <button type="button" id="btn-rueckgaengig" class="knopf erfolg-knopf">Rückgängig</button>
+      </div>
+      <button type="button" id="hersteller-anzeige" class="hersteller-anzeige">
+        <span class="ha-text">
+          <span class="ha-label">Hersteller</span>
+          <span id="hersteller-aktiv" class="ha-name">–</span>
+        </span>
+        <span class="ha-wechseln">ändern</span>
+      </button>
+
+      <div id="modus-schalter" class="modus-schalter" role="group" aria-label="Art der Eingabe">
+        <button type="button" id="btn-modus-scan" class="modus-knopf" aria-pressed="true">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5v14M7 5v14M11 5v14M14 5v14M18 5v14M21 5v14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          <span>Scannen</span>
+        </button>
+        <button type="button" id="btn-modus-hand" class="modus-knopf" aria-pressed="false">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h18v10H3zM7 11h.01M11 11h.01M15 11h.01M8 14h8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span>Eintippen</span>
+        </button>
+      </div>
+
+      <div id="foto-kopf" class="foto-kopf">
+        <span class="foto-titel">Ohne Nummer – mit Foto</span>
+        <button type="button" id="btn-foto-abbrechen" class="knopf knopf-neutral">Abbrechen</button>
+      </div>
+    </div>
+
+    <div class="buehne">
+      <!-- A) Scanner: Kamerabild direkt im Reiter -->
+      <div id="kamera" class="kamera">
+        <video id="scanner-video" playsinline muted autoplay></video>
+        <div class="kamera-rahmen" aria-hidden="true"></div>
+        <button type="button" id="btn-licht" class="knopf knopf-neutral kamera-licht versteckt">Licht an</button>
+        <div id="kamera-text" class="kamera-text">Kamera startet …</div>
+        <div id="kamera-fehler" class="kamera-fehler versteckt" role="alert">
+          <p id="kamera-fehler-text"></p>
+          <div class="kamera-fehler-knoepfe">
+            <button type="button" id="btn-zur-hand" class="knopf knopf-haupt">Zur Handeingabe wechseln</button>
+            <button type="button" id="btn-kamera-nochmal" class="knopf knopf-neutral">Kamera noch einmal versuchen</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- B) Handeingabe: Artikelnummer tippen -->
+      <div id="hand" class="hand">
+        <label class="feld-label" for="f-nummer">Artikelnummer</label>
+        <div class="zeile">
+          <input id="f-nummer" class="eingabe eingabe-nummer" type="text" autocomplete="off" autocapitalize="characters"
+                 autocorrect="off" spellcheck="false" enterkeyhint="next" maxlength="250">
+          <button type="button" id="btn-weiter" class="knopf knopf-haupt">Weiter</button>
+        </div>
+      </div>
+
+      <!-- Erkannte / getippte Nummer: antippen = korrigieren -->
+      <div id="nummer-box" class="nummer-box">
+        <button type="button" id="nummer-anzeige" class="nummer-anzeige">
+          <span class="nummer-kopf"><span class="nummer-label">Artikelnummer</span><span class="nummer-aendern">ändern</span></span>
+          <span id="nummer-wert" class="nummer-wert"></span>
+        </button>
+        <button type="button" id="btn-verwerfen" class="knopf knopf-neutral knopf-quadrat" aria-label="Diese Nummer verwerfen">✕</button>
+      </div>
+
+      <!-- Ohne Nummer – mit Foto -->
+      <div id="foto-panel" class="foto-panel">
+        <input id="f-foto" type="file" accept="image/*" capture="environment" class="versteckt" tabindex="-1">
+        <button type="button" id="btn-foto-neu" class="foto-knopf leer">
+          <img id="foto-bild" alt="Foto-Vorschau">
+          <span class="foto-knopf-text"><span id="foto-text-lang" class="lang">Foto aufnehmen</span><span id="foto-text-kurz" class="kurz">Foto</span></span>
+        </button>
+        <input id="f-beschreibung" class="eingabe" type="text" autocomplete="off" maxlength="200" enterkeyhint="done"
+               placeholder="Beschreibung (freiwillig)" aria-label="Beschreibung (freiwillig)">
+      </div>
+    </div>
+
+    <div class="erf-unten">
+      <button type="button" id="btn-foto" class="knopf knopf-neutral knopf-breit knopf-foto">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><circle cx="12" cy="13" r="3.5" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+        <span>Ohne Nummer – mit Foto</span>
+      </button>
+
+      <div id="eingabe" class="eingabe-block">
+        <div id="stueck-zeile" class="stueck-zeile">
+          <span class="stueck-label" id="stueck-label">Stückzahl</span>
+          <span id="f-stueck" class="stueck-feld" role="status" aria-live="polite" aria-labelledby="stueck-label"></span>
+        </div>
+        <div id="tasten" class="tasten">
+          <button type="button" class="taste" data-ziffer="1">1</button>
+          <button type="button" class="taste" data-ziffer="2">2</button>
+          <button type="button" class="taste" data-ziffer="3">3</button>
+          <button type="button" class="taste" data-ziffer="4">4</button>
+          <button type="button" class="taste" data-ziffer="5">5</button>
+          <button type="button" class="taste" data-ziffer="6">6</button>
+          <button type="button" class="taste" data-ziffer="7">7</button>
+          <button type="button" class="taste" data-ziffer="8">8</button>
+          <button type="button" class="taste" data-ziffer="9">9</button>
+          <div class="tasten-unten">
+            <button type="button" id="btn-ziffer-weg" class="taste taste-loeschen" aria-label="Letzte Ziffer löschen">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5h13v14H8l-6-7zM12 9l6 6M18 9l-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/></svg>
+            </button>
+            <button type="button" class="taste" data-ziffer="0">0</button>
+            <button type="button" id="btn-speichern" class="taste taste-speichern">Speichern</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Reiter 2: Hersteller -->
+  <section id="seite-hersteller" class="seite versteckt">
+    <h1 class="titel">Hersteller wählen</h1>
+    <p class="hinweis">Gilt für alles, was danach erfasst wird.</p>
+    <div id="hersteller-liste" class="hersteller-liste"></div>
+
+    <h2 class="abschnitt">Neuer Hersteller</h2>
+    <div class="zeile">
+      <input id="f-hersteller-neu" class="eingabe" type="text" autocomplete="off" maxlength="60"
+             enterkeyhint="done" placeholder="Name" aria-label="Name des neuen Herstellers">
+      <button type="button" id="btn-hersteller-neu" class="knopf knopf-neutral">Hinzufügen</button>
+    </div>
+  </section>
+
+  <!-- Reiter 3: Liste -->
+  <section id="seite-liste" class="seite versteckt">
+    <h1 class="titel" id="zaehler">0 Einträge</h1>
+    <button type="button" id="btn-export" class="knopf knopf-haupt knopf-breit knopf-gross">Exportieren (Datei fürs Büro)</button>
+    <p class="hinweis" id="export-info"></p>
+
+    <div id="liste" class="karten"></div>
+
+    <details class="weiteres">
+      <summary>Einstellungen</summary>
+      <div class="einstellung">
+        <div class="einstellung-text">
+          <div class="einstellung-label">Name / Gerät</div>
+          <div id="geraet-anzeige" class="geraet-anzeige"></div>
+        </div>
+        <button type="button" id="btn-geraet" class="knopf knopf-neutral">Ändern</button>
+      </div>
+      <button type="button" id="btn-alles-loeschen" class="knopf knopf-rot-leer">Alles löschen</button>
+      <p class="hinweis version" id="version"></p>
+      <p class="hinweis version offline-status" id="offline-status"></p>
+    </details>
+  </section>
+</main>
+
+<nav class="reiter" aria-label="Bereiche">
+  <button type="button" class="reiter-knopf aktiv" data-seite="erfassen">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5v14M7 5v14M11 5v14M14 5v14M18 5v14M21 5v14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <span>Erfassen</span>
+  </button>
+  <button type="button" class="reiter-knopf" data-seite="hersteller">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 21V10l6 4v-4l6 4V4h6v17z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+    <span>Hersteller</span>
+  </button>
+  <button type="button" class="reiter-knopf" data-seite="liste">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    <span>Liste <span id="reiter-zaehler" class="reiter-zaehler"></span></span>
+  </button>
+</nav>
+
+<!-- Dialog -->
+<div id="dialog-hintergrund" class="dialog-hintergrund versteckt">
+  <div id="dialog" class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-titel">
+    <h2 id="dialog-titel"></h2>
+    <div id="dialog-inhalt"></div>
+    <div id="dialog-knoepfe" class="dialog-knoepfe"></div>
+  </div>
+</div>
+
+<div id="meldung" class="meldung versteckt" role="status" aria-live="polite"></div>
+
+<noscript><p style="padding:16px">Diese App benötigt JavaScript.</p></noscript>
+<!-- Scan-Bibliothek (ZXing, für Geräte ohne eingebauten Scanner, z. B. iPhone) -->
+<script>
+@@vendor/barcode-detector.js@@
+</script>
+<script>
+@@app.js@@
+</script>
+<!-- Scan-Decoder als WebAssembly (Base64), wird erst bei Bedarf gelesen -->
+<script type="application/octet-stream" id="zxing-wasm">@@vendor/zxing_reader.wasm@@</script>
+</body>
+</html>

@@ -4,20 +4,51 @@ Einfache Inventur-Erfassung für Handy und Tablet (Android und iPhone/iPad): Her
 Artikelnummer scannen oder eintippen, Stückzahl eintragen, speichern. Für Teile ohne Nummer
 reicht ein Foto. Am Ende wird pro Gerät eine ZIP-Datei exportiert.
 
-**Kein Server.** Die App ist eine reine Webseite. Alle Daten liegen nur im Browser des jeweiligen
-Geräts und funktionieren nach dem ersten Öffnen auch ohne WLAN.
+Alle Daten liegen nur im Browser des jeweiligen Geräts. Nach dem ersten Öffnen mit Internet
+läuft die App auch im Lager ohne Netz.
 
-## Einrichten (einmalig, GitHub Pages)
+## Auf den Webspace gehören genau zwei Dateien
 
-Die Kamera funktioniert nur über `https` – GitHub Pages liefert das automatisch.
+| Datei        | Wozu                                                         |
+|--------------|--------------------------------------------------------------|
+| `index.html` | die komplette App (alles steckt in dieser einen Datei)       |
+| `sw.js`      | macht die App offline nutzbar – wird **nie** wieder geändert |
 
-1. Im Repository auf GitHub: **Settings → Pages**.
-2. Unter *Build and deployment*: Source **Deploy from a branch**, Branch wählen (z. B. `main`),
-   Ordner **/ (root)**, **Save**.
-3. Nach 1–2 Minuten steht dort die Adresse, z. B. `https://<name>.github.io/<repo>/`.
-4. Diese Adresse auf jedem Gerät **einmal mit Internet** öffnen (iPhone/iPad: in **Safari**,
-   Android: in **Chrome**) und kurz warten – danach läuft die App offline.
-5. Empfohlen: „Zum Home-Bildschirm“ (Safari: Teilen-Symbol; Chrome: Menü → „App installieren“).
+Beide Dateien in **denselben Ordner** auf dem Webspace hochladen, z. B. nach `inventur/`.
+Sonst nichts. Die Adresse ist dann z. B. `https://example.de/inventur/`.
+
+- Die Adresse muss mit `https://` beginnen, sonst geht die Kamera nicht.
+- Fehlt `sw.js`, funktioniert die App trotzdem – nur nicht ohne Netz.
+- **Alte Dateien** von früheren Versionen (`app.js`, `style.css`, `manifest.webmanifest`, die
+  Ordner `vendor/` und `icons/`) werden nicht mehr gebraucht. Am besten löschen; falls sie
+  liegen bleiben, stören sie aber nicht.
+
+## Update einspielen
+
+**Nur `index.html` ersetzen.** Fertig. `sw.js` bleibt, wie sie ist.
+
+Die Geräte holen sich die neue Version beim nächsten Öffnen mit Internet von selbst. Ist die
+App gerade offen und es wird nichts eingegeben, lädt sie sich neu; sonst erscheint oben der
+Balken „Neue Version verfügbar – tippen zum Laden“ (der angefangene Eintrag bleibt erhalten).
+
+## Version prüfen
+
+Im Reiter **Liste** ganz unten **Einstellungen** aufklappen. Dort steht z. B.
+
+- „Version v6 · Daten liegen nur auf diesem Gerät“
+- „Offline bereit“ – alles in Ordnung, die App läuft auch ohne Netz.
+- „Offline-Funktion aus: sw.js fehlt auf dem Webspace“ – `sw.js` hochladen (in denselben
+  Ordner wie `index.html`), dann die App einmal mit Internet neu öffnen.
+
+Zeigt ein Gerät noch die alte Version: App ganz schließen (aus der Liste der offenen Apps
+wegwischen) und mit Internet neu öffnen.
+
+## Auf dem Gerät einrichten
+
+1. Die Adresse auf jedem Gerät **einmal mit Internet** öffnen (iPhone/iPad: in **Safari**,
+   Android: in **Chrome**) und kurz warten, bis unter Einstellungen „Offline bereit“ steht.
+2. Empfohlen: über das Browsermenü auf den Startbildschirm legen (Safari: Teilen-Symbol →
+   „Zum Home-Bildschirm“; Chrome: Menü ⋮ → „Zum Startbildschirm hinzufügen“).
    **Wichtig auf iPhone/iPad:** Die App vom Home-Bildschirm hat einen eigenen Datenspeicher,
    getrennt von Safari. Also entweder immer das Symbol benutzen oder immer Safari – nicht mischen.
 
@@ -25,86 +56,46 @@ Die Kamera funktioniert nur über `https` – GitHub Pages liefert das automatis
 
 1. Beim ersten Start den **Namen bzw. Gerätenamen** eintragen (jedes Gerät einen anderen!).
 2. Oben im Reiter **Erfassen** steht groß der aktive **Hersteller** – antippen zum Ändern.
-   Ohne gewählten Hersteller erscheint nur „Hersteller wählen“.
 3. Oben zwischen **Scannen** und **Eintippen** umschalten. Die Wahl bleibt gespeichert.
-   - **Scannen:** Das Kamerabild läuft im Reiter. Code ins Bild halten → Nummer erscheint groß
-     (antippen = korrigieren, ✕ = verwerfen) → Stückzahl auf dem Ziffernblock → **Speichern** →
-     sofort scanbereit. Derselbe Code löst erst wieder aus, wenn er kurz aus dem Bild war
-     oder nach ca. 4 Sekunden.
-   - **Eintippen:** Artikelnummer → Enter/„Weiter“ → Stückzahl → Enter/„Speichern“ → die
-     Artikelnummer ist sofort wieder bereit.
+   - **Scannen:** Code ins Bild halten → Nummer erscheint groß (antippen = korrigieren,
+     ✕ = verwerfen) → Stückzahl auf dem Ziffernblock → **Speichern** → sofort scanbereit.
+   - **Eintippen:** Artikelnummer → „Weiter“ → Stückzahl → „Speichern“.
 4. Keine Nummer am Teil? **„Ohne Nummer – mit Foto“**: Foto machen, Beschreibung (freiwillig),
-   Stückzahl, **Speichern**. „Abbrechen“ führt ohne Speichern zurück.
+   Stückzahl, **Speichern**.
 5. Nach dem Speichern zeigt ein grüner Balken z. B. „✓ 4711 · 12 Stück“ mit **Rückgängig**.
-   Wurde die Nummer schon erfasst, steht dort zusätzlich „bereits X× erfasst“.
 6. Reiter **Liste**: alle Einträge ansehen, bearbeiten, löschen, **exportieren**.
-   Gerätename und „Alles löschen“ stehen unten unter „Einstellungen“.
-
-Geht die Kamera nicht (keine Erlaubnis, von anderer App belegt …), erscheint ein Hinweis mit
-dem Knopf „Zur Handeingabe wechseln“.
 
 Gleiche Artikelnummer mehrfach erfasst = mehrere Zeilen (wird nicht automatisch addiert).
 
-## Export und Zusammenführen
+## Export
 
-In **Liste → Exportieren** entsteht eine Datei `inventur_<Gerät>_<Datum>.zip` mit
+**Liste → Exportieren** erzeugt `inventur_<Gerät>_<Datum>.zip` mit einer CSV-Datei
+(Spalten `Datum;Uhrzeit;Gerät/Mitarbeiter;Hersteller;Artikelnummer;Stückzahl;Bemerkung;Foto-Dateiname`)
+und dem Ordner `fotos/`. Die CSV öffnet sich per Doppelklick in Excel. Die Artikelnummer steht
+dort als `="00123"`, damit führende Nullen und lange Nummern erhalten bleiben.
 
-- `inventur_<Gerät>_<Datum>.csv` – Spalten:
-  `Datum;Uhrzeit;Gerät/Mitarbeiter;Hersteller;Artikelnummer;Stückzahl;Bemerkung;Foto-Dateiname`
-  (in „Bemerkung“ steht die Beschreibung der Foto-Einträge)
-- Ordner `fotos/` – die Fotos; der Dateiname steht in der letzten CSV-Spalte.
-
-Die ZIP-Datei herunterladen oder per „Teilen“ (Mail, AirDrop …) ins Büro schicken.
-Die CSV lässt sich per Doppelklick in Excel öffnen (Semikolon, UTF-8 mit BOM, Windows-Zeilenenden).
-
-**Zusammenführen:** alle ZIPs entpacken, die CSV-Dateien in Excel öffnen und untereinander kopieren
-(Kopfzeile nur einmal) – oder über *Daten → Daten abrufen → Aus Ordner*. Die Spalte
-„Gerät/Mitarbeiter“ zeigt, woher eine Zeile stammt. Summen je Artikel z. B. per Pivot-Tabelle.
-Die Fotos aller Geräte können in einen gemeinsamen Ordner – die Dateinamen enthalten den Gerätenamen.
-
-**Hinweis zur Artikelnummer:** Sie steht in der CSV als `="00123"`. So behandelt Excel sie als Text;
-führende Nullen bleiben erhalten und lange Nummern (EAN) werden nicht zu `4,00638E+12`. Wer die CSV
-mit einem anderen Programm weiterverarbeitet, entfernt `="` am Anfang und `"` am Ende.
-Andere Textfelder, die mit `=`, `+`, `-` oder `@` beginnen, bekommen ein `'` vorangestellt
-(Schutz vor ungewollten Excel-Formeln).
+Zusammenführen: alle ZIPs entpacken, die CSV-Dateien in Excel untereinander kopieren (Kopfzeile
+nur einmal) – die Spalte „Gerät/Mitarbeiter“ zeigt, woher eine Zeile stammt.
 
 ## Wichtig: Daten liegen nur auf dem Gerät
 
-- Es gibt keine Sicherung und keinen Abgleich zwischen Geräten.
-- **Browserdaten/Website-Daten löschen = Inventur weg.** Ebenso bei privatem Surfen/Inkognito
-  (dort gar nicht benutzen). Vorher immer exportieren.
-- iPhone/iPad können Website-Daten löschen, wenn die Seite wochenlang nicht benutzt wurde.
-  Deshalb: am Ende jedes Zähltags exportieren.
-- „Alles löschen“ erst benutzen, wenn die Export-Datei im Büro angekommen und geprüft ist.
+- Keine Sicherung, kein Abgleich zwischen Geräten. **Am Ende jedes Zähltags exportieren.**
+- **Browserdaten/Website-Daten löschen = Inventur weg.** Nicht im privaten Modus benutzen.
+- „Alles löschen“ erst, wenn die Export-Datei im Büro angekommen und geprüft ist.
 
-## Update kommt nicht an
+---
 
-1. Unter **Liste → Einstellungen** ganz unten nachsehen, welche Version läuft (z. B. „Version v5“).
-2. Prüfen, ob auf dem Webspace wirklich die neue `sw.js` liegt: die Adresse der App mit `sw.js`
-   am Ende im Browser öffnen (z. B. `https://example.de/inventur/sw.js`) – in der dritten Zeile
-   muss die neue Nummer stehen (`var CACHE = 'inventur-v5'`). Steht dort noch die alte, wurden
-   die Dateien nicht (vollständig) hochgeladen.
-3. Die App **einmal ganz schließen** (aus der Liste der offenen Apps wegwischen) und mit Internet
-   neu öffnen, kurz warten. Ggf. ein zweites Mal schließen und öffnen. Wichtig beim Wechsel von
-   einer Version vor v5: Die alte Version kennt das automatische Neuladen noch nicht, deshalb ist
-   hier einmal Schließen und neu Öffnen nötig. Ab v5 erledigt die App das selbst.
-4. Nur im Notfall: vorher **exportieren**, dann in den Browser-Einstellungen **nur den Cache**
-   (zwischengespeicherte Bilder und Dateien) leeren – **nicht** die Website-Daten/Cookies,
-   sonst sind alle Einträge auf dem Gerät weg.
+## Für Entwickler
 
-## Technik (für die Pflege)
-
-- Dateien: `index.html`, `style.css`, `app.js`, `sw.js` (Offline-Cache), `manifest.webmanifest`,
-  `icons/`, `vendor/` (Scan-Bibliothek, lokal – kein CDN). Kein Build-Schritt.
-- Scannen: eingebauter `BarcodeDetector` des Browsers, wenn vorhanden (Android/Chrome); sonst der
-  mitgelieferte ZXing-Decoder als WebAssembly (`vendor/`, u. a. für iPhone/iPad).
-- Speicher: IndexedDB (`inventur`); Fotos werden auf max. 1600 px verkleinert (JPEG).
-- **Nach jeder Änderung an der App** in `sw.js` die Zeile `var CACHE = 'inventur-v5'` hochzählen
-  (`v6`, `v7` …) und in `app.js` die Zeile `var VERSION = 'v5'` genauso – sonst behalten die
-  Geräte die alte Version. Die laufende App sucht beim Öffnen und beim Zurückholen in den
-  Vordergrund (höchstens einmal pro Minute) nach einer neuen Version. Ist gerade nichts
-  eingegeben, lädt sie sich selbst neu; sonst erscheint oben der Balken „Neue Version verfügbar –
-  tippen zum Laden“ (der angefangene Eintrag bleibt dabei erhalten).
-- Welche Version läuft, steht unter **Liste → Einstellungen** ganz unten („Version v5“).
-- Lokal testen: `python3 -m http.server` im Ordner, dann `http://localhost:8000` (auf `localhost`
-  geht die Kamera auch ohne https).
+- Quelltext liegt in `src/` (`index.html` als Vorlage, `app.js`, `style.css`, `sw.js`,
+  `vendor/` mit der Scan-Bibliothek, `icons/`).
+- `python3 build.py` (nur Standardbibliothek) erzeugt daraus im Hauptordner `index.html`
+  (alles eingebettet: CSS, JS, ZXing-WebAssembly als Base64, Icons als Data-URI) und `sw.js`.
+  Beide Ergebnisdateien werden mit eingecheckt.
+- Die Versionsnummer steht nur in `src/index.html`: `<meta name="inventur-version" content="v6">`.
+  Bei jeder Änderung hochzählen, dann `build.py` laufen lassen.
+- `src/sw.js` nicht mehr ändern: Netz zuerst (max. ca. 3 s), sonst die zuletzt geladene Seite
+  aus dem Cache `inventur-seite`; alte Caches `inventur-v*` werden gelöscht.
+- Speicher: IndexedDB `inventur` (Schema unverändert seit v1). Kein Web-Manifest (eine
+  eingebettete Manifest-Datei lässt sich auf Android/iOS nicht zuverlässig nutzen).
+- Lokal testen: `python3 build.py && python3 -m http.server`, dann `http://localhost:8000`.

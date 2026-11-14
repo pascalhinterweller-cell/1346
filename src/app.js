@@ -2,7 +2,11 @@
 (function () {
   'use strict';
 
-  var VERSION = 'v5'; // muss zu CACHE in sw.js passen: 'inventur-' + VERSION
+  // Die Versionsnummer steht nur in index.html: <meta name="inventur-version" content="…">
+  var VERSION = (function () {
+    var m = document.querySelector('meta[name="inventur-version"]');
+    return (m && m.getAttribute('content')) || '?';
+  })();
   var DB_NAME = 'inventur';
   var DB_VERSION = 1;
   var STANDARD_HERSTELLER = ['Schüco', 'Dormakaba', 'GEZE', 'Record', 'Sonstige'];
@@ -61,7 +65,13 @@
   function warte(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   function bereinigen(s) { return String(s == null ? '' : s).replace(/[\u0000-\u001f\u007f]+/g, ' ').trim(); }
   function nurZiffern(s) { return String(s == null ? '' : s).replace(/\D+/g, '').replace(/^0+/, '').slice(0, STUECK_STELLEN); }
-  function vibrieren(ms) { try { if (navigator.vibrate) navigator.vibrate(ms); } catch (e) { /* egal */ } }
+  function vibrieren(ms) {
+    try {
+      // vor dem ersten Antippen blockiert der Browser das Vibrieren ohnehin (und meldet einen Fehler in der Konsole)
+      if (navigator.userActivation && !navigator.userActivation.hasBeenActive) return;
+      if (navigator.vibrate) navigator.vibrate(ms);
+    } catch (e) { /* egal */ }
+  }
 
   function stueckLesen(text) {
     var t = String(text).trim();
@@ -1161,24 +1171,31 @@
     if (scan.fehltRunden >= WEG_RUNDEN && jetzt - scan.fehltSeit >= WEG_MS) scan.sperreWert = '';
   }
 
-  function skriptLaden(src) {
-    return new Promise(function (ok, fehler) {
-      var s = document.createElement('script');
-      s.src = src;
-      s.onload = ok;
-      s.onerror = function () { s.remove(); fehler(new Error('Skript nicht ladbar: ' + src)); };
-      document.head.appendChild(s);
-    });
+  /* WebAssembly-Decoder: liegt als Base64 in index.html (Block mit id="zxing-wasm") */
+  function wasmDaten() {
+    var el = document.getElementById('zxing-wasm');
+    var b64 = el ? el.textContent.replace(/\s+/g, '') : '';
+    if (!b64) throw new Error('Scan-Decoder fehlt in index.html');
+    var bin = window.atob(b64);
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
   }
   function formateWaehlen(unterstuetzt) {
     return WUNSCH_FORMATE.filter(function (f) { return unterstuetzt.indexOf(f) >= 0; });
   }
-  /* Ersatz-Decoder (ZXing als WebAssembly, lokal im Ordner vendor/) – für iOS und Geräte ohne eingebauten Scanner. */
+  /* Ersatz-Decoder (ZXing als WebAssembly, in index.html eingebettet) – für iOS und Geräte ohne eingebauten Scanner.
+     wasmBinary = die Daten direkt übergeben; dann lädt die Bibliothek nichts aus dem Netz
+     (locateFile liefert nur einen Namen, der nie abgerufen wird). */
   function ersatzDetektor() {
     if (!ersatzVersprechen) {
-      ersatzVersprechen = skriptLaden('vendor/barcode-detector.js').then(function () {
+      ersatzVersprechen = Promise.resolve().then(function () {
         var api = window.BarcodeDetectionAPI;
-        api.prepareZXingModule({ overrides: { locateFile: function () { return 'vendor/zxing_reader.wasm'; } } });
+        if (!api) throw new Error('Scan-Bibliothek fehlt in index.html');
+        api.prepareZXingModule({
+          overrides: { wasmBinary: wasmDaten(), locateFile: function (name) { return name; } },
+          equalityFn: Object.is
+        });
         return api.BarcodeDetector.getSupportedFormats().then(function (f) {
           return new api.BarcodeDetector({ formats: formateWaehlen(f) });
         });
@@ -1417,7 +1434,8 @@
   var UPDATE_RELOAD = 'inventur-update-reload';   // sessionStorage: Zeitpunkt des letzten Update-Neuladens
   var UPDATE_EINGABE = 'inventur-update-eingabe'; // sessionStorage: angefangene Textfelder über das Neuladen retten
   var UPDATE_PRUEF_ABSTAND = 60000;
-  var update = { reg: null, letztePruefung: 0, verfuegbar: false, laedt: false };
+  var SEITEN_CACHE = 'inventur-seite'; // so heißt der Cache in sw.js
+  var update = { reg: null, letztePruefung: 0, verfuegbar: false, laedt: false, pruefLaeuft: false };
   var startBereit = Promise.resolve();
 
   function sitzungLesen(k) { try { return window.sessionStorage.getItem(k); } catch (e) { return null; } }
@@ -1458,7 +1476,7 @@
     sichern.catch(function () { /* Entwurf ist nur Komfort */ }).then(function () { location.reload(); });
   }
 
-  /* Neuer Service Worker hat übernommen */
+  /* Neue Version liegt vor (neue index.html auf dem Webspace oder neuer Service Worker) */
   function updateUebernommen() {
     if (update.verfuegbar || update.laedt) return;
     startBereit.then(function () {
@@ -1474,12 +1492,40 @@
     });
   }
 
+  /* Steht auf dem Webspace eine andere Version als die laufende? Liest nur den Anfang von index.html
+     (die Versionsnummer steht ganz oben) und bricht dann ab. */
+  function versionAufWebspace() {
+    if (!window.fetch || !window.TextDecoder) return Promise.resolve(null);
+    var muster = /<meta name="inventur-version" content="([^"]{1,40})"/;
+    return fetch(location.href.split('#')[0], { cache: 'no-store', credentials: 'same-origin' }).then(function (r) {
+      if (!r.ok || !r.body || !r.body.getReader) return null;
+      var leser = r.body.getReader(), dec = new TextDecoder(), text = '';
+      function weiter() {
+        return leser.read().then(function (t) {
+          if (!t.done) text += dec.decode(t.value, { stream: true });
+          var m = muster.exec(text);
+          if (m || t.done || text.length > 16384) {
+            leser.cancel().catch(function () { /* egal */ });
+            return m ? m[1] : null;
+          }
+          return weiter();
+        });
+      }
+      return weiter();
+    });
+  }
+
+  /* Beim Öffnen/Zurückholen (höchstens einmal pro Minute) nach einer neuen Version sehen */
   function updatePruefen() {
-    if (!update.reg || document.visibilityState !== 'visible') return;
+    if (document.visibilityState !== 'visible' || !/^https?:$/.test(location.protocol)) return;
     var jetzt = Date.now();
-    if (jetzt - update.letztePruefung < UPDATE_PRUEF_ABSTAND) return;
+    if (jetzt - update.letztePruefung < UPDATE_PRUEF_ABSTAND || update.pruefLaeuft) return;
     update.letztePruefung = jetzt;
-    update.reg.update().catch(function () { /* offline – später wieder */ });
+    if (update.reg) update.reg.update().catch(function () { /* offline – später wieder */ });
+    update.pruefLaeuft = true;
+    versionAufWebspace().then(function (v) {
+      if (v && v !== VERSION) updateUebernommen();
+    }, function () { /* offline – später wieder */ }).then(function () { update.pruefLaeuft = false; });
   }
 
   /* Nach einem Update-Neuladen die angefangenen Textfelder zurückholen */
@@ -1493,20 +1539,47 @@
     if (typeof e.herstellerNeu === 'string' && e.herstellerNeu) $('f-hersteller-neu').value = e.herstellerNeu.slice(0, 60);
   }
 
+  /* Zustand der Offline-Funktion unter „Einstellungen“ anzeigen */
+  function offlineStatus(text) { $('offline-status').textContent = text; }
+
+  /* Liegt die Seite schon im Gerät? Wenn nicht, ein paar Mal nachsehen (sw.js legt sie gleich ab). */
+  function offlineBereitPruefen(reg, versuch) {
+    caches.match(reg.scope, { cacheName: SEITEN_CACHE }).then(function (treffer) {
+      if (treffer) { offlineStatus('Offline bereit'); return; }
+      offlineStatus('Offline-Funktion wird eingerichtet …');
+      if (versuch < 20) setTimeout(function () { offlineBereitPruefen(reg, versuch + 1); }, 3000);
+    }, function () { offlineStatus('Offline bereit'); });
+  }
+
+  /* register() ist fehlgeschlagen: fehlt sw.js oder ist nur gerade kein Netz? */
+  function offlineFehlerPruefen() {
+    fetch('sw.js', { method: 'HEAD', cache: 'no-store', credentials: 'same-origin' }).then(function (r) {
+      if (r.status === 404 || r.status === 410) offlineStatus('Offline-Funktion aus: sw.js fehlt auf dem Webspace');
+      else offlineStatus('Offline-Funktion aus: sw.js lässt sich nicht einrichten');
+    }, function () {
+      offlineStatus('Offline-Funktion noch nicht eingerichtet (kein Internet)');
+    });
+  }
+
   function serviceWorkerEinrichten() {
-    if (!('serviceWorker' in navigator) || !/^https?:$/.test(location.protocol)) return;
+    document.addEventListener('visibilitychange', updatePruefen);
+    update.letztePruefung = Date.now(); // gerade frisch geladen: erst beim nächsten Zurückholen prüfen
+    if (!('serviceWorker' in navigator) || !window.caches || !/^https?:$/.test(location.protocol)) {
+      offlineStatus('Offline-Funktion aus: von diesem Browser nicht unterstützt');
+      return;
+    }
     var sw = navigator.serviceWorker;
     var hatteController = !!sw.controller;
     sw.addEventListener('controllerchange', function () {
       if (!hatteController) { hatteController = true; return; } // Erststart: nichts zu tun
       updateUebernommen();
     });
-    document.addEventListener('visibilitychange', updatePruefen);
+    offlineStatus('Offline-Funktion wird eingerichtet …');
     window.addEventListener('load', function () {
       sw.register('sw.js', { updateViaCache: 'none' }).then(function (reg) {
         update.reg = reg;
-        update.letztePruefung = Date.now(); // register() prüft selbst schon
-      }).catch(function () { /* App läuft auch ohne */ });
+        return sw.ready.then(function () { offlineBereitPruefen(reg, 0); });
+      }).catch(function () { offlineFehlerPruefen(); }); // App läuft auch ohne
     });
   }
 
